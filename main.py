@@ -88,8 +88,7 @@ def register(data: RegisterSchema, db: Session = Depends(get_db)):
         phone=data.phone,
         email=data.email,
         password=hashed_password,
-        employee_id=employee_id_to_store,
-        role=data.role
+      
     )
     db.add(new_user)
     db.commit()
