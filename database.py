@@ -6,14 +6,9 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Load variables from .env
 
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "customer_complaint")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "musema123")
-
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-
+# Prefer a single DATABASE_URL if provided (useful for deployments).
+# Fall back to individual DB_* variables for local development.
+DATABASE_URL = os.getenv("DATABASE_URL")
 # Create engine
 engine = create_engine(DATABASE_URL)
 

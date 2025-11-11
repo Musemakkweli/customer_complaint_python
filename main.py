@@ -1,14 +1,33 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
+from typing import Optional, List
+from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from database import engine, SessionLocal, Base
 from models import User
+import os
+import datetime
+import jwt
+
+# OAuth2 scheme (clients will send Authorization: Bearer <token>)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 # Create tables in database automatically
 Base.metadata.create_all(bind=engine)
 
 # FastAPI instance
 app = FastAPI(title="Customer Complaint System")
+
+# Password hashing context
+# Use PBKDF2-HMAC-SHA256 to avoid bcrypt issues (no 72-byte limit). This is slower
+# than argon2 but widely supported and doesn't require a C bcrypt backend.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+
+# JWT settings
+SECRET_KEY = os.getenv("SECRET_KEY", "change-me-please")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
 # Root route
 @app.get("/")
@@ -34,9 +53,10 @@ class RegisterSchema(BaseModel):
     fullname: str
     phone: str
     email: EmailStr
-    password: str = None
-    employee_id: str = None
-    role: str  # 'customer', 'employee', 'admin'
+    password: Optional[str] = None
+    employee_id: Optional[str] = None
+    # Make role optional; default to 'customer' when not provided by client
+    role: str = "customer"  # 'customer', 'employee', 'admin'
 
 # ------------------------------
 # Routes
@@ -47,18 +67,45 @@ def register(data: RegisterSchema, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
+    # Ensure employee_id is NULL for customers (store None) even if client sent something
+    employee_id_to_store = data.employee_id
+    if data.role == "customer":
+        employee_id_to_store = None
+
+    # Validate required fields depending on role
+    if data.role == "customer" and not data.password:
+        raise HTTPException(status_code=400, detail="Password is required for customers")
+    if data.role != "customer" and not data.employee_id:
+        raise HTTPException(status_code=400, detail="employee_id is required for employees/admins")
+
+    # Hash password before storing (if provided)
+    hashed_password = None
+    if data.password:
+        hashed_password = pwd_context.hash(data.password)
+
     new_user = User(
         fullname=data.fullname,
         phone=data.phone,
         email=data.email,
-        password=data.password,
-        employee_id=data.employee_id,
+        password=hashed_password,
+        employee_id=employee_id_to_store,
         role=data.role
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
     return {"message": f"{data.role.capitalize()} registered successfully!"}
+
+
+def create_access_token(data: dict, expires_delta: Optional[datetime.timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.datetime.utcnow() + datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
 
 @app.post("/login")
 def login(data: LoginSchema, db: Session = Depends(get_db)):
@@ -68,10 +115,82 @@ def login(data: LoginSchema, db: Session = Depends(get_db)):
 
     # Check password or employee_id based on role
     if user.role == "customer":
-        if user.password != data.password:
+        # customer's password is stored hashed; verify
+        if not user.password or not pwd_context.verify(data.password, user.password):
             raise HTTPException(status_code=400, detail="Incorrect password")
-    else:  # admin or employee
-        if user.employee_id != data.password:
-            raise HTTPException(status_code=400, detail="Incorrect ID")
+    else:
+        # For employees/admins: accept either employee_id OR a stored password (if present).
+        # This allows clients to authenticate with their employee ID or with a password
+        # if one was set for that account.
+        ok = False
+        if user.employee_id and data.password == user.employee_id:
+            ok = True
+        elif user.password and pwd_context.verify(data.password, user.password):
+            ok = True
+        if not ok:
+            raise HTTPException(status_code=400, detail="Incorrect ID or password")
 
-    return {"message": f"Login successful! Redirect to {user.role} dashboard."}
+    # Create JWT access token
+    access_token_expires = datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    token = create_access_token(
+        data={"sub": str(user.email), "role": user.role}, expires_delta=access_token_expires
+    )
+
+    user_info = {
+        "id": str(user.id),
+        "fullname": user.fullname,
+        "email": user.email,
+        "role": user.role,
+        "employee_id": user.employee_id,
+    }
+
+    return {"message": "Login successful", "access_token": token, "token_type": "bearer", "user": user_info}
+
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+    except Exception:
+        raise credentials_exception
+    user = db.query(User).filter(User.email == email).first()
+    if user is None:
+        raise credentials_exception
+    return user
+
+
+@app.get("/users")
+def read_users(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Only admin users can list all users
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+    users = db.query(User).all()
+    result = []
+    for u in users:
+        result.append({
+            "id": str(u.id),
+            "fullname": u.fullname,
+            "phone": u.phone,
+            "email": u.email,
+            "role": u.role,
+            "employee_id": u.employee_id,
+        })
+    return result
+
+
+@app.get("/me")
+def read_me(current_user: User = Depends(get_current_user)):
+    return {
+        "id": str(current_user.id),
+        "fullname": current_user.fullname,
+        "email": current_user.email,
+        "role": current_user.role,
+    }
