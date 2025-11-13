@@ -30,18 +30,15 @@ Base.metadata.create_all(bind=engine)
 # FastAPI app
 app = FastAPI(title="Customer Complaint System")
 
-# -----------------------
-# CORS
-# -----------------------
-origins = ["http://localhost:3000"]  # React dev server
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],  # 👈 temporarily allow all origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # -----------------------
 # DB Dependency
