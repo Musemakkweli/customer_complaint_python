@@ -13,5 +13,10 @@ class UserResponse(BaseModel):
         from_attributes = True  # ✅ Pydantic v2 replacement for orm_mode
 
 
+from pydantic import BaseModel
+
 class UpdateRoleSchema(BaseModel):
     role: str   # must be: "customer", "employee", "admin"
+
+class UpdateEmployeeIDSchema(BaseModel):
+    employee_id: str

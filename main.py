@@ -56,22 +56,25 @@ class RegisterSchema(BaseModel):
     role: str = "customer"
 
 class LoginSchema(BaseModel):
-    email: EmailStr
+    email: str  # For employees this will be employee_id
     password: str
 
 class UserResponse(BaseModel):
     id: UUID
     fullname: str
     phone: str
-    email: EmailStr
+    email: str
     role: str
     employee_id: Optional[str] = None
 
     class Config:
-        from_attributes = True  # Pydantic v2 replacement for orm_mode
+        from_attributes = True
 
 class UpdateRoleSchema(BaseModel):
-    role: str  # must be "customer", "employee", or "admin"
+    role: str  # "customer", "employee", "admin"
+
+class UpdateEmployeeIDSchema(BaseModel):
+    employee_id: str
 
 # -----------------------
 # JWT Utility
@@ -82,8 +85,7 @@ def create_access_token(data: dict, expires_delta: Optional[datetime.timedelta] 
         expires_delta if expires_delta else datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     ex = HTTPException(
@@ -93,14 +95,16 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
+        identifier: str = payload.get("sub")
+        if identifier is None:
             raise ex
     except Exception:
         raise ex
 
-    user = db.query(User).filter(User.email == email).first()
-    if user is None:
+    user = db.query(User).filter(
+        (User.email == identifier) | (User.employee_id == identifier)
+    ).first()
+    if not user:
         raise ex
     return user
 
@@ -143,24 +147,27 @@ def register(data: RegisterSchema, db: Session = Depends(get_db)):
 
 @app.post("/login")
 def login(data: LoginSchema, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email).first()
+    # Employees use employee_id, customers use email
+    user = db.query(User).filter(
+        (User.email == data.email) | (User.employee_id == data.email)
+    ).first()
+
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     if user.role == "customer":
         if not user.password or not pwd_context.verify(data.password, user.password):
             raise HTTPException(status_code=400, detail="Incorrect password")
+        login_identifier = user.email
     else:
-        ok = False
-        if user.employee_id and data.password == user.employee_id:
-            ok = True
-        elif user.password and pwd_context.verify(data.password, user.password):
-            ok = True
-        if not ok:
-            raise HTTPException(status_code=400, detail="Incorrect ID or password")
+        if user.employee_id != data.email:
+            raise HTTPException(status_code=400, detail="Incorrect employee ID")
+        if not user.password or not pwd_context.verify(data.password, user.password):
+            raise HTTPException(status_code=400, detail="Incorrect password")
+        login_identifier = user.employee_id
 
     token = create_access_token(
-        data={"sub": str(user.email), "role": user.role},
+        data={"sub": login_identifier, "role": user.role},
         expires_delta=datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
 
@@ -171,7 +178,7 @@ def login(data: LoginSchema, db: Session = Depends(get_db)):
         "user": {
             "id": str(user.id),
             "fullname": user.fullname,
-            "email": user.email,
+            "email": login_identifier,
             "role": user.role,
             "employee_id": user.employee_id
         }
@@ -182,24 +189,17 @@ def read_me(current_user: User = Depends(get_current_user)):
     return {
         "id": str(current_user.id),
         "fullname": current_user.fullname,
-        "email": current_user.email,
+        "email": current_user.email if current_user.role == "customer" else current_user.employee_id,
         "role": current_user.role,
     }
 
-# -----------------------
-# GET ALL USERS
-# -----------------------
 @app.get("/users", response_model=List[UserResponse])
 def get_all_users(db: Session = Depends(get_db)):
     return db.query(User).all()
 
-# -----------------------
-# UPDATE USER ROLE
-# -----------------------
 @app.put("/users/{user_id}/role")
 def update_user_role(user_id: str, data: UpdateRoleSchema, db: Session = Depends(get_db)):
     allowed_roles = ["customer", "employee", "admin"]
-
     if data.role not in allowed_roles:
         raise HTTPException(status_code=400, detail="Invalid role")
 
@@ -221,5 +221,28 @@ def update_user_role(user_id: str, data: UpdateRoleSchema, db: Session = Depends
             "fullname": user.fullname,
             "email": user.email,
             "role": user.role
+        }
+    }
+
+@app.put("/users/{user_id}/employee-id")
+def update_employee_id(user_id: str, data: UpdateEmployeeIDSchema, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role != "employee":
+        raise HTTPException(status_code=400, detail="Only employees can have an employee_id")
+
+    user.employee_id = data.employee_id
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "message": "Employee ID updated successfully",
+        "user": {
+            "id": str(user.id),
+            "fullname": user.fullname,
+            "email": user.email,
+            "role": user.role,
+            "employee_id": user.employee_id
         }
     }
