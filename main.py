@@ -6,11 +6,11 @@ from typing import Optional, List
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from database import engine, SessionLocal, Base
-from models import User
+from models import User, Complaint
+from uuid import UUID
 import os
 import datetime
 import jwt
-from uuid import UUID
 
 # -----------------------
 # Config
@@ -75,6 +75,11 @@ class UpdateRoleSchema(BaseModel):
 
 class UpdateEmployeeIDSchema(BaseModel):
     employee_id: str
+
+class ComplaintCreateSchema(BaseModel):
+    title: str
+    description: str
+    user_id: str  # UUID of the customer submitting the complaint
 
 # -----------------------
 # JWT Utility
@@ -144,27 +149,34 @@ def register(data: RegisterSchema, db: Session = Depends(get_db)):
     db.refresh(new_user)
 
     return {"message": f"{data.role.capitalize()} registered successfully!"}
-
 @app.post("/login")
 def login(data: LoginSchema, db: Session = Depends(get_db)):
-    # Employees use employee_id, customers use email
-    user = db.query(User).filter(
-        (User.email == data.email) | (User.employee_id == data.email)
-    ).first()
+    # Try to find user by email first
+    user = db.query(User).filter(User.email == data.email).first()
+
+    if not user:
+        # If not found by email, check employee_id
+        user = db.query(User).filter(User.employee_id == data.email).first()
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if user.role == "customer":
+    # Customers and Admins log in using email
+    if user.role in ["customer", "admin"]:
         if not user.password or not pwd_context.verify(data.password, user.password):
             raise HTTPException(status_code=400, detail="Incorrect password")
         login_identifier = user.email
-    else:
+
+    # Employees log in using employee ID
+    elif user.role == "employee":
         if user.employee_id != data.email:
             raise HTTPException(status_code=400, detail="Incorrect employee ID")
         if not user.password or not pwd_context.verify(data.password, user.password):
             raise HTTPException(status_code=400, detail="Incorrect password")
         login_identifier = user.employee_id
+
+    else:
+        raise HTTPException(status_code=400, detail="Invalid role")
 
     token = create_access_token(
         data={"sub": login_identifier, "role": user.role},
@@ -244,5 +256,36 @@ def update_employee_id(user_id: str, data: UpdateEmployeeIDSchema, db: Session =
             "email": user.email,
             "role": user.role,
             "employee_id": user.employee_id
+        }
+    }
+
+@app.post("/complaints")
+def submit_complaint(data: ComplaintCreateSchema, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == data.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.role != "customer":
+        raise HTTPException(status_code=403, detail="Only customers can submit complaints")
+
+    new_complaint = Complaint(
+        user_id=data.user_id,
+        title=data.title,
+        description=data.description
+    )
+
+    db.add(new_complaint)
+    db.commit()
+    db.refresh(new_complaint)
+
+    return {
+        "message": "Complaint submitted successfully",
+        "complaint": {
+            "id": str(new_complaint.id),
+            "user_id": str(new_complaint.user_id),
+            "title": new_complaint.title,
+            "description": new_complaint.description,
+            "status": new_complaint.status,
+            "created_at": str(new_complaint.created_at)
         }
     }

@@ -1,5 +1,6 @@
-from sqlalchemy import Column, String, text
+from sqlalchemy import Column, String, DateTime, ForeignKey, text
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql import func
 from database import Base
 import uuid
 
@@ -18,3 +19,14 @@ class User(Base):
     employee_id = Column(String(50), nullable=True)
     # role defaults to 'customer' - set both Python default and a DB server default
     role = Column(String(20), nullable=False, default="customer", server_default=text("'customer'"))  # 'customer', 'employee', 'admin'
+
+
+class Complaint(Base):
+    __tablename__ = "complaints"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    title = Column(String, nullable=False)
+    description = Column(String, nullable=False)
+    status = Column(String, default="pending")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
