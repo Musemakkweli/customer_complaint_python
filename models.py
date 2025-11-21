@@ -8,25 +8,67 @@ import uuid
 class User(Base):
     __tablename__ = "users"
 
-    # Use UUID primary key (Postgres). Python-side default uses uuid.uuid4(),
-    # DB-side server_default uses gen_random_uuid() (requires pgcrypto extension).
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()")
+    )
+
     fullname = Column(String(255), nullable=False)
     phone = Column(String(50), nullable=False)
     email = Column(String(255), unique=True, nullable=False)
-    password = Column(String(255))        # for customers
-    # employee_id should be NULL by default (nullable=True)
-    employee_id = Column(String(50), nullable=True)
-    # role defaults to 'customer' - set both Python default and a DB server default
-    role = Column(String(20), nullable=False, default="customer", server_default=text("'customer'"))  # 'customer', 'employee', 'admin'
+    password = Column(String(255), nullable=True)            # For customers
+    employee_id = Column(String(50), nullable=True)          # For employees
+    role = Column(
+        String(20),
+        nullable=False,
+        default="customer",
+        server_default=text("'customer'")
+    )  # 'customer', 'employee', 'admin'
 
 
 class Complaint(Base):
     __tablename__ = "complaints"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    title = Column(String, nullable=False)
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()")
+    )
+
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False
+    )
+
+    title = Column(String(255), nullable=False)
     description = Column(String, nullable=False)
-    status = Column(String, default="pending")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    complaint_type = Column(
+        String(20),
+        nullable=False,
+        default="common",
+        server_default=text("'common'")
+    )   # 'common' or 'private'
+
+    status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        server_default=text("'pending'")
+    )
+
+    address = Column(String(255), nullable=False)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+
+    updated_at = Column(
+        DateTime(timezone=True),
+        onupdate=func.now()
+    )

@@ -1,39 +1,62 @@
 from pydantic import BaseModel, EmailStr
 from uuid import UUID
 
-# -----------------------
-# User response schema
-# -----------------------
+
+# ------------------------------------
+# User Response Schema
+# ------------------------------------
 class UserResponse(BaseModel):
     id: UUID
     fullname: str
     phone: str
     email: EmailStr
     role: str
-    employee_id: str | None = None  # Optional field
+    employee_id: str | None = None
 
     class Config:
-        from_attributes = True  # ✅ Pydantic v2 replacement for orm_mode
+        from_attributes = True  # Pydantic v2
 
 
-# -----------------------
-# Update role schema
-# -----------------------
+# ------------------------------------
+# Update Role Schema
+# ------------------------------------
 class UpdateRoleSchema(BaseModel):
-    role: str  # must be: "customer", "employee", or "admin"
+    role: str  # "customer", "employee", "admin"
 
 
-# -----------------------
-# Update employee ID schema
-# -----------------------
+# ------------------------------------
+# Update Employee ID Schema
+# ------------------------------------
 class UpdateEmployeeIDSchema(BaseModel):
     employee_id: str
+from pydantic import BaseModel
+from typing import Literal
+from uuid import UUID
 
-
-# -----------------------
-# Complaint creation schema
-# -----------------------
+# ------------------------------------
+# Complaint Creation Schema
+# ------------------------------------
 class ComplaintCreateSchema(BaseModel):
+    user_id: UUID
     title: str
     description: str
-    user_id: str  # UUID of the customer submitting the complaint
+    complaint_type: Literal["common", "private"]  # Only allows "common" or "private"
+    address: str
+
+
+# ------------------------------------
+# Complaint Response Schema
+# ------------------------------------
+class ComplaintResponseSchema(BaseModel):
+    id: UUID
+    user_id: UUID
+    title: str
+    description: str
+    complaint_type: str
+    address: str
+    status: str
+    created_at: str
+    updated_at: str  # Added updated_at field
+
+    class Config:
+        from_attributes = True

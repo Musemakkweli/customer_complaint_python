@@ -5,19 +5,19 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
+from uuid import UUID
 from database import engine, SessionLocal, Base
 from models import User, Complaint
-from uuid import UUID
-import os
 import datetime
+import os
 import jwt
 
-# -----------------------
-# Config
-# -----------------------
+# -------------------------------------------------------
+# CONFIGURATION
+# -------------------------------------------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-please")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60))
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
@@ -26,17 +26,18 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Customer Complaint System")
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# -----------------------
-# DB Dependency
-# -----------------------
+# -------------------------------------------------------
+# DATABASE CONNECTION
+# -------------------------------------------------------
 def get_db():
     db = SessionLocal()
     try:
@@ -44,9 +45,9 @@ def get_db():
     finally:
         db.close()
 
-# -----------------------
-# Schemas
-# -----------------------
+# -------------------------------------------------------
+# SCHEMAS
+# -------------------------------------------------------
 class RegisterSchema(BaseModel):
     fullname: str
     phone: str
@@ -56,7 +57,7 @@ class RegisterSchema(BaseModel):
     role: str = "customer"
 
 class LoginSchema(BaseModel):
-    email: str  # For employees this will be employee_id
+    email: str       # employees will use employee_id here
     password: str
 
 class UserResponse(BaseModel):
@@ -71,36 +72,43 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 class UpdateRoleSchema(BaseModel):
-    role: str  # "customer", "employee", "admin"
+    role: str   # "customer", "employee", "admin"
 
 class UpdateEmployeeIDSchema(BaseModel):
     employee_id: str
 
 class ComplaintCreateSchema(BaseModel):
+    user_id: UUID
     title: str
     description: str
-    user_id: str  # UUID of the customer submitting the complaint
+    complaint_type: str     # common or private
+    address: str
 
-# -----------------------
-# JWT Utility
-# -----------------------
-def create_access_token(data: dict, expires_delta: Optional[datetime.timedelta] = None):
+# -------------------------------------------------------
+# JWT UTILITY FUNCTIONS
+# -------------------------------------------------------
+def create_access_token(data: dict, expires_delta=None):
     to_encode = data.copy()
     expire = datetime.datetime.utcnow() + (
         expires_delta if expires_delta else datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     to_encode.update({"exp": expire})
+
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+):
     ex = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
+        status_code=401,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        identifier: str = payload.get("sub")
+        identifier = payload.get("sub")
         if identifier is None:
             raise ex
     except Exception:
@@ -109,30 +117,39 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     user = db.query(User).filter(
         (User.email == identifier) | (User.employee_id == identifier)
     ).first()
+
     if not user:
         raise ex
+
     return user
 
-# -----------------------
-# Routes
-# -----------------------
+# -------------------------------------------------------
+# ROUTES
+# -------------------------------------------------------
 @app.get("/")
 def root():
     return {"message": "Customer Complaint API is running!"}
 
+# ------------------------
+# REGISTER
+# ------------------------
 @app.post("/register")
 def register(data: RegisterSchema, db: Session = Depends(get_db)):
+
     existing = db.query(User).filter(User.email == data.email).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
+        raise HTTPException(400, "Email already registered")
 
-    employee_id_to_store = data.employee_id if data.role != "customer" else None
+    if data.role == "customer":
+        if not data.password:
+            raise HTTPException(400, "Password is required for customers")
 
-    if data.role == "customer" and not data.password:
-        raise HTTPException(status_code=400, detail="Password is required for customers")
+        employee_id = None
+    else:
+        if not data.employee_id:
+            raise HTTPException(400, "Employee ID is required for employees or admins")
 
-    if data.role != "customer" and not data.employee_id:
-        raise HTTPException(status_code=400, detail="employee_id is required for employees/admins")
+        employee_id = data.employee_id
 
     hashed_password = pwd_context.hash(data.password) if data.password else None
 
@@ -141,46 +158,52 @@ def register(data: RegisterSchema, db: Session = Depends(get_db)):
         phone=data.phone,
         email=data.email,
         password=hashed_password,
-        employee_id=employee_id_to_store,
+        employee_id=employee_id,
         role=data.role
     )
+
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
 
-    return {"message": f"{data.role.capitalize()} registered successfully!"}
+    return {"message": f"{data.role.capitalize()} registered successfully"}
+
+# ------------------------
+# LOGIN
+# ------------------------
 @app.post("/login")
 def login(data: LoginSchema, db: Session = Depends(get_db)):
-    # Try to find user by email first
+
+    # Search by email first
     user = db.query(User).filter(User.email == data.email).first()
 
+    # If not email, check employee_id
     if not user:
-        # If not found by email, check employee_id
         user = db.query(User).filter(User.employee_id == data.email).first()
 
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(404, "User not found")
 
-    # Customers and Admins log in using email
+    # CUSTOMER OR ADMIN LOGIN USING EMAIL
     if user.role in ["customer", "admin"]:
-        if not user.password or not pwd_context.verify(data.password, user.password):
-            raise HTTPException(status_code=400, detail="Incorrect password")
+        if not pwd_context.verify(data.password, user.password):
+            raise HTTPException(400, "Incorrect password")
         login_identifier = user.email
 
-    # Employees log in using employee ID
+    # EMPLOYEE LOGIN USING EMPLOYEE ID
     elif user.role == "employee":
         if user.employee_id != data.email:
-            raise HTTPException(status_code=400, detail="Incorrect employee ID")
-        if not user.password or not pwd_context.verify(data.password, user.password):
-            raise HTTPException(status_code=400, detail="Incorrect password")
+            raise HTTPException(400, "Incorrect employee ID")
+        if not pwd_context.verify(data.password, user.password):
+            raise HTTPException(400, "Incorrect password")
         login_identifier = user.employee_id
 
     else:
-        raise HTTPException(status_code=400, detail="Invalid role")
+        raise HTTPException(400, "Invalid role")
 
     token = create_access_token(
-        data={"sub": login_identifier, "role": user.role},
-        expires_delta=datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        {"sub": login_identifier, "role": user.role},
+        expires_delta=datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
 
     return {
@@ -196,6 +219,9 @@ def login(data: LoginSchema, db: Session = Depends(get_db)):
         }
     }
 
+# ------------------------
+# GET CURRENT USER
+# ------------------------
 @app.get("/me")
 def read_me(current_user: User = Depends(get_current_user)):
     return {
@@ -205,19 +231,26 @@ def read_me(current_user: User = Depends(get_current_user)):
         "role": current_user.role,
     }
 
+# ------------------------
+# GET ALL USERS
+# ------------------------
 @app.get("/users", response_model=List[UserResponse])
 def get_all_users(db: Session = Depends(get_db)):
     return db.query(User).all()
 
+# ------------------------
+# UPDATE USER ROLE
+# ------------------------
 @app.put("/users/{user_id}/role")
-def update_user_role(user_id: str, data: UpdateRoleSchema, db: Session = Depends(get_db)):
-    allowed_roles = ["customer", "employee", "admin"]
-    if data.role not in allowed_roles:
-        raise HTTPException(status_code=400, detail="Invalid role")
+def update_role(user_id: str, data: UpdateRoleSchema, db: Session = Depends(get_db)):
+
+    allowed = ["customer", "employee", "admin"]
+    if data.role not in allowed:
+        raise HTTPException(400, "Invalid role")
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(404, "User not found")
 
     user.role = data.role
     if data.role == "customer":
@@ -226,41 +259,37 @@ def update_user_role(user_id: str, data: UpdateRoleSchema, db: Session = Depends
     db.commit()
     db.refresh(user)
 
-    return {
-        "message": "Role updated successfully",
-        "user": {
-            "id": str(user.id),
-            "fullname": user.fullname,
-            "email": user.email,
-            "role": user.role
-        }
-    }
+    return {"message": "Role updated successfully"}
 
+# ------------------------
+# UPDATE EMPLOYEE ID
+# ------------------------
 @app.put("/users/{user_id}/employee-id")
 def update_employee_id(user_id: str, data: UpdateEmployeeIDSchema, db: Session = Depends(get_db)):
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(404, "User not found")
+
     if user.role != "employee":
-        raise HTTPException(status_code=400, detail="Only employees can have an employee_id")
+        raise HTTPException(400, "Only employees can have an employee_id")
 
     user.employee_id = data.employee_id
     db.commit()
     db.refresh(user)
 
-    return {
-        "message": "Employee ID updated successfully",
-        "user": {
-            "id": str(user.id),
-            "fullname": user.fullname,
-            "email": user.email,
-            "role": user.role,
-            "employee_id": user.employee_id
-        }
-    }
+    return {"message": "Employee ID updated successfully"}
 
+# -------------------------------------------------------
+# COMPLAINT ROUTES
+# -------------------------------------------------------
+
+# -----------------------
+# CREATE COMPLAINT
+# -----------------------
 @app.post("/complaints")
 def submit_complaint(data: ComplaintCreateSchema, db: Session = Depends(get_db)):
+
     user = db.query(User).filter(User.id == data.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -271,7 +300,10 @@ def submit_complaint(data: ComplaintCreateSchema, db: Session = Depends(get_db))
     new_complaint = Complaint(
         user_id=data.user_id,
         title=data.title,
-        description=data.description
+        description=data.description,
+        complaint_type=data.complaint_type,
+        address=data.address,
+        status="pending"
     )
 
     db.add(new_complaint)
@@ -285,7 +317,55 @@ def submit_complaint(data: ComplaintCreateSchema, db: Session = Depends(get_db))
             "user_id": str(new_complaint.user_id),
             "title": new_complaint.title,
             "description": new_complaint.description,
+            "complaint_type": new_complaint.complaint_type,
+            "address": new_complaint.address,
             "status": new_complaint.status,
-            "created_at": str(new_complaint.created_at)
+            "created_at": new_complaint.created_at.isoformat() if new_complaint.created_at else None,
+            "updated_at": new_complaint.updated_at.isoformat() if new_complaint.updated_at else None
         }
     }
+
+# -----------------------
+# GET ALL COMPLAINTS
+# -----------------------
+@app.get("/complaints")
+def get_all_complaints(db: Session = Depends(get_db)):
+    complaints = db.query(Complaint).all()
+    return [
+        {
+            "id": str(c.id),
+            "user_id": str(c.user_id),
+            "title": c.title,
+            "description": c.description,
+            "complaint_type": c.complaint_type,
+            "address": c.address,
+            "status": c.status,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "updated_at": c.updated_at.isoformat() if c.updated_at else None
+        }
+        for c in complaints
+    ]
+
+# -----------------------
+# GET COMPLAINTS BY USER ID
+# -----------------------
+@app.get("/complaints/user/{user_id}")
+def get_complaints_by_user(user_id: UUID, db: Session = Depends(get_db)):
+    complaints = db.query(Complaint).filter(Complaint.user_id == user_id).all()
+    if not complaints:
+        raise HTTPException(status_code=404, detail="No complaints found for this user")
+
+    return [
+        {
+            "id": str(c.id),
+            "user_id": str(c.user_id),
+            "title": c.title,
+            "description": c.description,
+            "complaint_type": c.complaint_type,
+            "address": c.address,
+            "status": c.status,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "updated_at": c.updated_at.isoformat() if c.updated_at else None
+        }
+        for c in complaints
+    ]
