@@ -1,52 +1,52 @@
 from pydantic import BaseModel, EmailStr
+from typing import Optional, Literal
 from uuid import UUID
 
+# -----------------------------
+# Registration/Login Schemas
+# -----------------------------
+class RegisterSchema(BaseModel):
+    fullname: str
+    phone: str
+    email: EmailStr
+    password: Optional[str] = None
+    employee_id: Optional[str] = None
+    role: str = "customer"
 
-# ------------------------------------
-# User Response Schema
-# ------------------------------------
+class LoginSchema(BaseModel):
+    email: str
+    password: str
+
+# -----------------------------
+# User Response & Update Schemas
+# -----------------------------
 class UserResponse(BaseModel):
     id: UUID
     fullname: str
     phone: str
     email: EmailStr
     role: str
-    employee_id: str | None = None
+    employee_id: Optional[str] = None
 
     class Config:
-        from_attributes = True  # Pydantic v2
+        from_attributes = True
 
-
-# ------------------------------------
-# Update Role Schema
-# ------------------------------------
 class UpdateRoleSchema(BaseModel):
-    role: str  # "customer", "employee", "admin"
+    role: str
 
-
-# ------------------------------------
-# Update Employee ID Schema
-# ------------------------------------
 class UpdateEmployeeIDSchema(BaseModel):
     employee_id: str
-from pydantic import BaseModel
-from typing import Literal
-from uuid import UUID
 
-# ------------------------------------
-# Complaint Creation Schema
-# ------------------------------------
+# -----------------------------
+# Complaint Schemas
+# -----------------------------
 class ComplaintCreateSchema(BaseModel):
     user_id: UUID
     title: str
     description: str
-    complaint_type: Literal["common", "private"]  # Only allows "common" or "private"
+    complaint_type: Literal["common", "private"]
     address: str
 
-
-# ------------------------------------
-# Complaint Response Schema
-# ------------------------------------
 class ComplaintResponseSchema(BaseModel):
     id: UUID
     user_id: UUID
@@ -56,7 +56,22 @@ class ComplaintResponseSchema(BaseModel):
     address: str
     status: str
     created_at: str
-    updated_at: str  # Added updated_at field
+    updated_at: str
 
     class Config:
         from_attributes = True
+
+# -----------------------------
+# Employee / Assign Complaint
+# -----------------------------
+class EmployeeSchema(BaseModel):
+    id: int
+    name: str
+    email: str
+    position: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class AssignComplaintSchema(BaseModel):
+    employee_id: str
