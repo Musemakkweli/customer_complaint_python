@@ -16,10 +16,12 @@ from schemas import (
     EmployeeSchema,
     AssignComplaintSchema
 )
-import datetime
+from datetime import datetime, timedelta
 import os
 import jwt
 from passlib.context import CryptContext
+from fastapi import WebSocket, WebSocketDisconnect
+import asyncio
 
 # ---------------------- CONFIGURATION ----------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-please")
@@ -283,3 +285,136 @@ def get_all_employees(db: Session = Depends(get_db)):
         })
     
     return response
+# ---------------------- GET COMPLAINTS BY USER ----------------------
+@app.get("/complaints/user/{user_id}")
+def get_complaints_by_user(user_id: UUID, db: Session = Depends(get_db)):
+    complaints = db.query(Complaint).filter(Complaint.user_id == user_id).all()
+
+    if not complaints:
+        return {"message": "No complaints found for this user", "data": []}
+
+    return [
+        {
+            "id": str(c.id),
+            "user_id": str(c.user_id),
+            "title": c.title,
+            "description": c.description,
+            "complaint_type": c.complaint_type,
+            "address": c.address,
+            "status": c.status,
+            "assigned_to": c.assigned_to,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "updated_at": c.updated_at.isoformat() if c.updated_at else None
+        }
+        for c in complaints
+    ]
+from datetime import datetime, timedelta
+
+
+# ---------------------- USER-SPECIFIC COMPLAINT STATISTICS ----------------------
+@app.get("/complaints/stats/user/{user_id}")
+def user_complaint_statistics(user_id: UUID, db: Session = Depends(get_db)):
+
+    # Count complaints submitted by this user
+    total = db.query(Complaint).filter(Complaint.user_id == user_id).count()
+
+    # Count status types for this user
+    pending = db.query(Complaint).filter(
+        Complaint.user_id == user_id,
+        Complaint.status == "pending"
+    ).count()
+
+    resolved = db.query(Complaint).filter(
+        Complaint.user_id == user_id,
+        Complaint.status == "resolved"
+    ).count()
+
+    in_progress = db.query(Complaint).filter(
+        Complaint.user_id == user_id,
+        Complaint.status == "in_progress"
+    ).count()
+
+    assigned = db.query(Complaint).filter(
+        Complaint.user_id == user_id,
+        Complaint.status == "assigned"
+    ).count()
+
+    # Count complaint types (common / private)
+    common = db.query(Complaint).filter(
+        Complaint.user_id == user_id,
+        Complaint.complaint_type == "common"
+    ).count()
+
+    private = db.query(Complaint).filter(
+        Complaint.user_id == user_id,
+        Complaint.complaint_type == "private"
+    ).count()
+
+    # Count recent complaints (created in last 7 days)
+    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    recent = db.query(Complaint).filter(
+        Complaint.user_id == user_id,
+        Complaint.created_at >= seven_days_ago
+    ).count()
+
+    # Return packed statistics for frontend use
+    return {
+        "user_id": str(user_id),
+        "total_complaints": total,
+        "pending": pending,
+        "resolved": resolved,
+        "in_progress": in_progress,
+        "assigned": assigned,
+        "common": common,
+        "private": private,
+        "recent": recent
+    }
+
+# ---------------------- REAL-TIME SYSTEM-WIDE COMPLAINT STATS ----------------------
+@app.websocket("/complaints/stats/ws")
+async def complaints_stats_ws(websocket: WebSocket):
+    # Accept the WebSocket connection
+    await websocket.accept()
+
+    try:
+        while True:
+            db = SessionLocal()  # Open a DB session
+
+            # System-wide counts
+            total = db.query(Complaint).count()
+            pending = db.query(Complaint).filter(Complaint.status == "pending").count()
+            resolved = db.query(Complaint).filter(Complaint.status == "resolved").count()
+            in_progress = db.query(Complaint).filter(Complaint.status == "in_progress").count()
+            assigned = db.query(Complaint).filter(Complaint.status == "assigned").count()
+            common = db.query(Complaint).filter(Complaint.complaint_type == "common").count()
+            private = db.query(Complaint).filter(Complaint.complaint_type == "private").count()
+            seven_days_ago = datetime.utcnow() - timedelta(days=7)
+            recent = db.query(Complaint).filter(Complaint.created_at >= seven_days_ago).count()
+
+            db.close()  # Close the DB session
+
+            # Send data to client
+            await websocket.send_json({
+                "total": total,
+                "pending": pending,
+                "in_progress": in_progress,
+                "resolved": resolved,
+                "assigned": assigned,
+                "common": common,
+                "private": private,
+                "recent": recent
+            })
+
+            await asyncio.sleep(3)  # Update interval (seconds)
+
+    except WebSocketDisconnect:
+        print("Client disconnected from WebSocket")
+
+@app.websocket("/test/ws")
+async def test_ws(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            await websocket.send_text("Hello from WebSocket!")
+    except WebSocketDisconnect:
+        print("Client disconnected")
