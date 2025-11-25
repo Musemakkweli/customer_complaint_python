@@ -422,3 +422,28 @@ async def test_ws(websocket: WebSocket):
             await websocket.send_text("Hello from WebSocket!")
     except WebSocketDisconnect:
         print("Client disconnected")
+# ---------------------- GET COMPLAINTS BY EMPLOYEE ----------------------
+@app.get("/complaints/employee/{employee_id}")
+def get_complaints_by_employee(employee_id: str, db: Session = Depends(get_db)):
+    # Join Complaint with User to get fullname
+    complaints = db.query(Complaint, User).join(User, Complaint.user_id == User.id)\
+        .filter(Complaint.assigned_to == employee_id).all()
+
+    if not complaints:
+        return {"message": "No complaints assigned to this employee", "complaints": []}
+
+    return [
+        {
+            "id": str(c.Complaint.id),
+            "user_fullname": c.User.fullname,  # <-- return fullname instead of user_id
+            "title": c.Complaint.title,
+            "description": c.Complaint.description,
+            "complaint_type": c.Complaint.complaint_type,
+            "address": c.Complaint.address,
+            "status": c.Complaint.status,
+            "assigned_to": c.Complaint.assigned_to,
+            "created_at": c.Complaint.created_at.isoformat() if c.Complaint.created_at else None,
+            "updated_at": c.Complaint.updated_at.isoformat() if c.Complaint.updated_at else None
+        }
+        for c in complaints
+    ]
