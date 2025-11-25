@@ -55,8 +55,8 @@ def get_db():
 # ---------------------- JWT UTILITIES ----------------------
 def create_access_token(data: dict, expires_delta=None):
     to_encode = data.copy()
-    expire = datetime.datetime.utcnow() + (
-        expires_delta if expires_delta else datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.utcnow() + (
+        expires_delta if expires_delta else timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
@@ -142,7 +142,7 @@ def login(data: LoginSchema, db: Session = Depends(get_db)):
 
     token = create_access_token(
         {"sub": login_identifier, "role": user.role},
-        expires_delta=datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
 
     return {
