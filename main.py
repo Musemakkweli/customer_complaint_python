@@ -15,8 +15,9 @@ from schemas import (
     ComplaintResponseSchema,
     EmployeeSchema,
     AssignComplaintSchema,
-    CompleteComplaintSchema  
+    UpdateComplaintStatusSchema 
 )
+
 
 from datetime import datetime, timedelta
 import os
@@ -424,6 +425,7 @@ async def test_ws(websocket: WebSocket):
             await websocket.send_text("Hello from WebSocket!")
     except WebSocketDisconnect:
         print("Client disconnected")
+
 # ---------------------- GET COMPLAINTS BY EMPLOYEE ----------------------
 @app.get("/complaints/employee/{employee_id}")
 def get_complaints_by_employee(employee_id: str, db: Session = Depends(get_db)):
@@ -437,7 +439,8 @@ def get_complaints_by_employee(employee_id: str, db: Session = Depends(get_db)):
     return [
         {
             "id": str(c.Complaint.id),
-            "user_fullname": c.User.fullname,  # <-- return fullname instead of user_id
+            "user_id": str(c.User.id),          # <-- added user_id
+            "user_fullname": c.User.fullname,   # <-- keep fullname
             "title": c.Complaint.title,
             "description": c.Complaint.description,
             "complaint_type": c.Complaint.complaint_type,
@@ -449,9 +452,8 @@ def get_complaints_by_employee(employee_id: str, db: Session = Depends(get_db)):
         }
         for c in complaints
     ]
-
-@app.patch("/complaints/complete")
-def complete_complaint(data: CompleteComplaintSchema, db: Session = Depends(get_db)):
+@app.patch("/complaints/update-status")
+def update_complaint_status(data: UpdateComplaintStatusSchema, db: Session = Depends(get_db)):
     # Get the complaint
     complaint = db.query(Complaint).filter(Complaint.id == data.complaint_id).first()
     if not complaint:
@@ -461,8 +463,8 @@ def complete_complaint(data: CompleteComplaintSchema, db: Session = Depends(get_
     if complaint.assigned_to != data.employee_id:
         raise HTTPException(status_code=403, detail="You are not assigned to this complaint")
     
-    # Update complaint status
-    complaint.status = "done"
+    # Update status and notes
+    complaint.status = data.status
     if data.notes:
         complaint.notes = data.notes
 
@@ -473,9 +475,10 @@ def complete_complaint(data: CompleteComplaintSchema, db: Session = Depends(get_
     user = db.query(User).filter(User.id == complaint.user_id).first()
 
     return {
-        "message": "Complaint marked as done",
+        "message": "Complaint updated successfully",
         "complaint": {
             "id": str(complaint.id),
+            "user_id": str(user.id) if user else None,
             "user_fullname": user.fullname if user else None,
             "title": complaint.title,
             "status": complaint.status,

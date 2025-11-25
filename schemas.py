@@ -77,7 +77,8 @@ class AssignComplaintSchema(BaseModel):
     employee_id: str
 
 
-class CompleteComplaintSchema(BaseModel):
+class UpdateComplaintStatusSchema(BaseModel):
     complaint_id: UUID
     employee_id: str
+    status: str  # new status: e.g., "done", "in_progress", "pending"
     notes: Optional[str] = None
