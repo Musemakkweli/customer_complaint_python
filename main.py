@@ -228,15 +228,19 @@ def submit_complaint(data: ComplaintCreateSchema, db: Session = Depends(get_db))
     db.refresh(new_complaint)
 
     return {"message": "Complaint submitted successfully", "complaint_id": str(new_complaint.id)}
-
 # ---------------------- GET ALL COMPLAINTS ----------------------
 @app.get("/complaints")
 def get_all_complaints(db: Session = Depends(get_db)):
     complaints = db.query(Complaint).all()
-    return [
-        {
+
+    response = []
+
+    for c in complaints:
+        user = db.query(User).filter(User.id == c.user_id).first()
+
+        response.append({
             "id": str(c.id),
-            "user_id": str(c.user_id),
+            "user_fullname": user.fullname if user else None,  # 👈 changed
             "title": c.title,
             "description": c.description,
             "complaint_type": c.complaint_type,
@@ -245,9 +249,9 @@ def get_all_complaints(db: Session = Depends(get_db)):
             "assigned_to": c.assigned_to,
             "created_at": c.created_at.isoformat() if c.created_at else None,
             "updated_at": c.updated_at.isoformat() if c.updated_at else None
-        }
-        for c in complaints
-    ]
+        })
+
+    return response
 
 # ---------------------- ASSIGN COMPLAINT ----------------------
 @app.put("/complaints/{complaint_id}/assign")
