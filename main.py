@@ -14,8 +14,10 @@ from schemas import (
     ComplaintCreateSchema,
     ComplaintResponseSchema,
     EmployeeSchema,
-    AssignComplaintSchema
+    AssignComplaintSchema,
+    CompleteComplaintSchema  
 )
+
 from datetime import datetime, timedelta
 import os
 import jwt
@@ -447,3 +449,37 @@ def get_complaints_by_employee(employee_id: str, db: Session = Depends(get_db)):
         }
         for c in complaints
     ]
+
+@app.patch("/complaints/complete")
+def complete_complaint(data: CompleteComplaintSchema, db: Session = Depends(get_db)):
+    # Get the complaint
+    complaint = db.query(Complaint).filter(Complaint.id == data.complaint_id).first()
+    if not complaint:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+    
+    # Verify employee is assigned
+    if complaint.assigned_to != data.employee_id:
+        raise HTTPException(status_code=403, detail="You are not assigned to this complaint")
+    
+    # Update complaint status
+    complaint.status = "done"
+    if data.notes:
+        complaint.notes = data.notes
+
+    db.commit()
+    db.refresh(complaint)
+
+    # Get user fullname
+    user = db.query(User).filter(User.id == complaint.user_id).first()
+
+    return {
+        "message": "Complaint marked as done",
+        "complaint": {
+            "id": str(complaint.id),
+            "user_fullname": user.fullname if user else None,
+            "title": complaint.title,
+            "status": complaint.status,
+            "assigned_to": complaint.assigned_to,
+            "notes": complaint.notes
+        }
+    }

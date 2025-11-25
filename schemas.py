@@ -75,3 +75,9 @@ class EmployeeSchema(BaseModel):
 
 class AssignComplaintSchema(BaseModel):
     employee_id: str
+
+
+class CompleteComplaintSchema(BaseModel):
+    complaint_id: UUID
+    employee_id: str
+    notes: Optional[str] = None
