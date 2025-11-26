@@ -508,11 +508,10 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Serve uploaded images as static files
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
-
-# ---------------------- CREATE USER PROFILE ----------------------
+from uuid import UUID
+# ---------------------- CREATE OR UPDATE USER PROFILE ----------------------
 @app.post("/user-profile")
-async def create_user_profile(
+async def create_or_update_user_profile(
     user_id: str = Form(...),
     province: str = Form(...),
     district: str = Form(...),
@@ -523,8 +522,14 @@ async def create_user_profile(
     db: Session = Depends(get_db),
     request: Request = None
 ):
+    # Convert user_id to UUID
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user_id UUID")
+
     # Check if user exists
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_uuid).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
@@ -532,8 +537,6 @@ async def create_user_profile(
     image_url = None
     if profile_image:
         file_ext = profile_image.filename.split(".")[-1]
-
-        # Ensure safe filename
         filename = f"{user_id}.{file_ext}"
         file_path = os.path.join(UPLOAD_DIR, filename)
 
@@ -545,22 +548,39 @@ async def create_user_profile(
         base_url = str(request.base_url).rstrip("/")
         image_url = f"{base_url}/uploads/profile_images/{filename}"
 
-    # Create profile
-    profile = UserProfile(
-        user_id=user_id,
-        province=province,
-        district=district,
-        sector=sector,
-        cell=cell,
-        village=village,
-        profile_image=image_url
-    )
-    db.add(profile)
-    db.commit()
-    db.refresh(profile)
+    # Check if profile already exists
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user_uuid).first()
+
+    if profile:
+        # Update existing profile
+        profile.province = province
+        profile.district = district
+        profile.sector = sector
+        profile.cell = cell
+        profile.village = village
+        if image_url:
+            profile.profile_image = image_url
+        db.commit()
+        db.refresh(profile)
+        message = "User profile updated successfully"
+    else:
+        # Create new profile
+        profile = UserProfile(
+            user_id=user_uuid,
+            province=province,
+            district=district,
+            sector=sector,
+            cell=cell,
+            village=village,
+            profile_image=image_url
+        )
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+        message = "User profile created successfully"
 
     return {
-        "message": "User profile created successfully",
+        "message": message,
         "profile": {
             "id": str(profile.id),
             "user_id": str(profile.user_id),
@@ -569,24 +589,37 @@ async def create_user_profile(
             "sector": profile.sector,
             "cell": profile.cell,
             "village": profile.village,
-            "profile_image_url": image_url
+            "profile_image_url": profile.profile_image
         }
     }
-@app.get("/user-profile/{user_id}")
-def get_user_profile(user_id: str, db: Session = Depends(get_db)):
-    # Check if profile exists
-    profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
 
+
+@app.get("/user-profile/{user_id}")
+def get_user_profile(user_id: str, db: Session = Depends(get_db), request: Request = None):
+    # Convert user_id string to UUID
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID format")
+
+    # Query profile using UUID
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user_uuid).first()
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 
+    # Build full image URL
+    image_url = None
+    if profile.profile_image:
+        base_url = str(request.base_url).rstrip("/")
+        filename = profile.profile_image.split("/")[-1]  # store only filename
+        image_url = f"{base_url}/uploads/profile_images/{filename}"
+
     return {
-        "user_id": profile.user_id,
+        "user_id": str(profile.user_id),
         "province": profile.province,
         "district": profile.district,
         "sector": profile.sector,
         "cell": profile.cell,
         "village": profile.village,
-        "profile_image_url": profile.profile_image  # already the full URL
+        "profile_image_url": image_url
     }
-
