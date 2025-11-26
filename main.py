@@ -301,13 +301,22 @@ def get_all_employees(db: Session = Depends(get_db)):
 # ---------------------- GET COMPLAINTS BY USER ----------------------
 @app.get("/complaints/user/{user_id}")
 def get_complaints_by_user(user_id: UUID, db: Session = Depends(get_db)):
+    # Fetch all complaints for the given user
     complaints = db.query(Complaint).filter(Complaint.user_id == user_id).all()
 
     if not complaints:
         return {"message": "No complaints found for this user", "data": []}
 
-    return [
-        {
+    results = []
+    for c in complaints:
+        # Get employee UUID if assigned
+        employee_uuid = None
+        if c.assigned_to:
+            employee = db.query(User).filter(User.employee_id == c.assigned_to).first()
+            if employee:
+                employee_uuid = str(employee.id)
+
+        results.append({
             "id": str(c.id),
             "user_id": str(c.user_id),
             "title": c.title,
@@ -315,13 +324,13 @@ def get_complaints_by_user(user_id: UUID, db: Session = Depends(get_db)):
             "complaint_type": c.complaint_type,
             "address": c.address,
             "status": c.status,
-            "assigned_to": c.assigned_to,
+            "assigned_to": c.assigned_to,    # Employee code
+            "employee_id": employee_uuid,    # Employee UUID
             "created_at": c.created_at.isoformat() if c.created_at else None,
             "updated_at": c.updated_at.isoformat() if c.updated_at else None
-        }
-        for c in complaints
-    ]
-from datetime import datetime, timedelta
+        })
+
+    return results
 
 
 # ---------------------- USER-SPECIFIC COMPLAINT STATISTICS ----------------------
