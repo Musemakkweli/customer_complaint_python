@@ -1,6 +1,7 @@
 from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from database import Base
 import uuid
 
@@ -71,3 +72,22 @@ class Complaint(Base):
         DateTime(timezone=True),
         onupdate=func.now()
     )
+    
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    
+    # Location fields
+    province = Column(String(100), nullable=False)
+    district = Column(String(100), nullable=False)
+    sector = Column(String(100), nullable=False)
+    cell = Column(String(100), nullable=False)
+    village = Column(String(100), nullable=False)
+    
+    profile_image = Column(String, nullable=True)  # store image path or URL
+
+    # Relationship to user (optional)
+    user = relationship("User", backref="profile")

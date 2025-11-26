@@ -1,9 +1,12 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from uuid import UUID
+import shutil
 from database import engine, SessionLocal, Base
+from models import UserProfile, User
+from schemas import UserProfileCreateSchema
 from models import User, Complaint
 from schemas import (
     RegisterSchema,
@@ -25,6 +28,9 @@ import jwt
 from passlib.context import CryptContext
 from fastapi import WebSocket, WebSocketDisconnect
 import asyncio
+from fastapi.staticfiles import StaticFiles
+from fastapi import Request
+
 
 # ---------------------- CONFIGURATION ----------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-please")
@@ -486,3 +492,92 @@ def update_complaint_status(data: UpdateComplaintStatusSchema, db: Session = Dep
             "notes": complaint.notes
         }
     }
+
+# ---------------------- STATIC FILES ----------------------
+UPLOAD_DIR = "uploads/profile_images"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Serve uploaded images as static files
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+
+# ---------------------- CREATE USER PROFILE ----------------------
+@app.post("/user-profile")
+async def create_user_profile(
+    user_id: str = Form(...),
+    province: str = Form(...),
+    district: str = Form(...),
+    sector: str = Form(...),
+    cell: str = Form(...),
+    village: str = Form(...),
+    profile_image: UploadFile = File(None),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    # Check if user exists
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Handle file upload
+    image_url = None
+    if profile_image:
+        file_ext = profile_image.filename.split(".")[-1]
+
+        # Ensure safe filename
+        filename = f"{user_id}.{file_ext}"
+        file_path = os.path.join(UPLOAD_DIR, filename)
+
+        # Save image
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(profile_image.file, buffer)
+
+        # Build absolute image URL
+        base_url = str(request.base_url).rstrip("/")
+        image_url = f"{base_url}/uploads/profile_images/{filename}"
+
+    # Create profile
+    profile = UserProfile(
+        user_id=user_id,
+        province=province,
+        district=district,
+        sector=sector,
+        cell=cell,
+        village=village,
+        profile_image=image_url
+    )
+    db.add(profile)
+    db.commit()
+    db.refresh(profile)
+
+    return {
+        "message": "User profile created successfully",
+        "profile": {
+            "id": str(profile.id),
+            "user_id": str(profile.user_id),
+            "province": profile.province,
+            "district": profile.district,
+            "sector": profile.sector,
+            "cell": profile.cell,
+            "village": profile.village,
+            "profile_image_url": image_url
+        }
+    }
+@app.get("/user-profile/{user_id}")
+def get_user_profile(user_id: str, db: Session = Depends(get_db)):
+    # Check if profile exists
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
+
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    return {
+        "user_id": profile.user_id,
+        "province": profile.province,
+        "district": profile.district,
+        "sector": profile.sector,
+        "cell": profile.cell,
+        "village": profile.village,
+        "profile_image_url": profile.profile_image  # already the full URL
+    }
+

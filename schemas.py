@@ -82,3 +82,13 @@ class UpdateComplaintStatusSchema(BaseModel):
     employee_id: str
     status: str  # new status: e.g., "done", "in_progress", "pending"
     notes: Optional[str] = None
+
+
+class UserProfileCreateSchema(BaseModel):
+    user_id: UUID
+    province: str
+    district: str
+    sector: str
+    cell: str
+    village: str
+    profile_image: Optional[str] = None 
