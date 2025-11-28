@@ -86,6 +86,7 @@ class UserProfile(Base):
     sector = Column(String(100), nullable=False)
     cell = Column(String(100), nullable=False)
     village = Column(String(100), nullable=False)
+    about = Column(String)
     
     profile_image = Column(String, nullable=True)  # store image path or URL
 

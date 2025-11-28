@@ -510,61 +510,71 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 from uuid import UUID
 # ---------------------- CREATE OR UPDATE USER PROFILE ----------------------
+
+UPLOAD_DIR = "uploads/profile_images"
+ALLOWED_EXTENSIONS = ["png", "jpg", "jpeg"]
+
 @app.post("/user-profile")
 async def create_or_update_user_profile(
     user_id: str = Form(...),
+    fullname: str = Form(...),
+    email: str = Form(...),
+    phone: str = Form(...),
     province: str = Form(...),
     district: str = Form(...),
     sector: str = Form(...),
     cell: str = Form(...),
     village: str = Form(...),
+    about: str = Form(None),
     profile_image: UploadFile = File(None),
     db: Session = Depends(get_db),
     request: Request = None
 ):
+    # Ensure upload directory exists
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
     # Convert user_id to UUID
     try:
         user_uuid = UUID(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user_id UUID")
 
-    # Check if user exists
+    # Fetch the user
     user = db.query(User).filter(User.id == user_uuid).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     # Handle file upload
     image_url = None
     if profile_image:
-        file_ext = profile_image.filename.split(".")[-1]
+        file_ext = profile_image.filename.split(".")[-1].lower()
+        if file_ext not in ALLOWED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail="Invalid file type")
         filename = f"{user_id}.{file_ext}"
         file_path = os.path.join(UPLOAD_DIR, filename)
-
-        # Save image
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(profile_image.file, buffer)
-
-        # Build absolute image URL
         base_url = str(request.base_url).rstrip("/")
         image_url = f"{base_url}/uploads/profile_images/{filename}"
 
-    # Check if profile already exists
-    profile = db.query(UserProfile).filter(UserProfile.user_id == user_uuid).first()
+    # Update user info
+    user.fullname = fullname
+    user.email = email
+    user.phone = phone
 
+    # Create or update profile
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user_uuid).first()
     if profile:
-        # Update existing profile
         profile.province = province
         profile.district = district
         profile.sector = sector
         profile.cell = cell
         profile.village = village
+        profile.about = about
         if image_url:
             profile.profile_image = image_url
-        db.commit()
-        db.refresh(profile)
         message = "User profile updated successfully"
     else:
-        # Create new profile
         profile = UserProfile(
             user_id=user_uuid,
             province=province,
@@ -572,54 +582,85 @@ async def create_or_update_user_profile(
             sector=sector,
             cell=cell,
             village=village,
+            about=about,
             profile_image=image_url
         )
         db.add(profile)
-        db.commit()
-        db.refresh(profile)
         message = "User profile created successfully"
 
+    # Commit all changes
+    db.commit()
+    db.refresh(user)
+    db.refresh(profile)
+
+    # Return response
     return {
         "message": message,
+        "user": {
+            "id": str(user.id),
+            "fullname": user.fullname,
+            "email": user.email,
+            "phone": user.phone,
+            "role": getattr(user, "role", None)
+        },
         "profile": {
             "id": str(profile.id),
-            "user_id": str(profile.user_id),
             "province": profile.province,
             "district": profile.district,
             "sector": profile.sector,
             "cell": profile.cell,
             "village": profile.village,
+            "about": profile.about,
             "profile_image_url": profile.profile_image
         }
     }
 
+# ---------------------- GET USER PROFILE ----------------------
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.orm import Session
+from uuid import UUID
+from database import get_db
+from models import User, UserProfile  # import your models
 
 @app.get("/user-profile/{user_id}")
 def get_user_profile(user_id: str, db: Session = Depends(get_db), request: Request = None):
-    # Convert user_id string to UUID
+    # Validate UUID
     try:
         user_uuid = UUID(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid UUID format")
 
-    # Query profile using UUID
-    profile = db.query(UserProfile).filter(UserProfile.user_id == user_uuid).first()
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
+    # Fetch user
+    user = db.query(User).filter(User.id == user_uuid).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    # Build full image URL
+    # Fetch user profile (additional info)
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user_uuid).first()
+
+    # Build profile image URL if available
     image_url = None
-    if profile.profile_image:
+    if profile and profile.profile_image:
         base_url = str(request.base_url).rstrip("/")
-        filename = profile.profile_image.split("/")[-1]  # store only filename
+        filename = profile.profile_image.split("/")[-1]
         image_url = f"{base_url}/uploads/profile_images/{filename}"
 
     return {
-        "user_id": str(profile.user_id),
-        "province": profile.province,
-        "district": profile.district,
-        "sector": profile.sector,
-        "cell": profile.cell,
-        "village": profile.village,
-        "profile_image_url": image_url
+        "user": {
+            "id": str(user.id),
+            "fullname": user.fullname,
+            "email": user.email,
+            "phone": user.phone,
+            "role": user.role,
+            "employee_id": user.employee_id
+        },
+        "profile": {
+            "province": profile.province if profile else None,
+            "district": profile.district if profile else None,
+            "sector": profile.sector if profile else None,
+            "cell": profile.cell if profile else None,
+            "village": profile.village if profile else None,
+            "about": profile.about if profile else None,            # Added about
+            "profile_image_url": image_url
+        }
     }
