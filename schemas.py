@@ -19,17 +19,17 @@ class LoginSchema(BaseModel):
 
 # -----------------------------
 # User Response & Update Schemas
-# -----------------------------
 class UserResponse(BaseModel):
     id: UUID
     fullname: str
     phone: str
-    email: EmailStr
+    email: Optional[EmailStr] = None   # <-- allow None
     role: str
     employee_id: Optional[str] = None
 
     class Config:
         from_attributes = True
+
 
 class UpdateRoleSchema(BaseModel):
     role: str

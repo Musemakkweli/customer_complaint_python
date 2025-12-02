@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, APIRouter
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -30,6 +30,8 @@ from fastapi import WebSocket, WebSocketDisconnect
 import asyncio
 from fastapi.staticfiles import StaticFiles
 from fastapi import Request
+from sqlalchemy import or_
+
 
 
 # ---------------------- CONFIGURATION ----------------------
@@ -130,30 +132,30 @@ def register(data: RegisterSchema, db: Session = Depends(get_db)):
     return {"message": f"{data.role.capitalize()} registered successfully"}
 
 # ---------------------- LOGIN ----------------------
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 @app.post("/login")
 def login(data: LoginSchema, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email).first()
+    # Find user by email or employee ID
+    user = db.query(User).filter(
+        or_(User.email == data.email, User.employee_id == data.email)
+    ).first()
+    
     if not user:
-        user = db.query(User).filter(User.employee_id == data.email).first()
-    if not user:
-        raise HTTPException(404, "User not found")
-
-    if user.role in ["customer", "admin"]:
-        if not pwd_context.verify(data.password, user.password):
-            raise HTTPException(400, "Incorrect password")
-        login_identifier = user.email
-    elif user.role == "employee":
-        if user.employee_id != data.email or not pwd_context.verify(data.password, user.password):
-            raise HTTPException(400, "Incorrect credentials")
-        login_identifier = user.employee_id
-    else:
-        raise HTTPException(400, "Invalid role")
-
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Verify password against hash
+    if not pwd_context.verify(data.password, user.password):
+        raise HTTPException(status_code=400, detail="Incorrect password")
+    
+    login_identifier = user.email if user.role in ["customer", "admin"] else user.employee_id
+    
     token = create_access_token(
         {"sub": login_identifier, "role": user.role},
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
-
+    
     return {
         "message": "Login successful",
         "access_token": token,
@@ -161,7 +163,7 @@ def login(data: LoginSchema, db: Session = Depends(get_db)):
         "user": {
             "id": str(user.id),
             "fullname": user.fullname,
-            "email": login_identifier,
+            "email": user.email,
             "role": user.role,
             "employee_id": user.employee_id
         }
@@ -467,6 +469,7 @@ def get_complaints_by_employee(employee_id: str, db: Session = Depends(get_db)):
         }
         for c in complaints
     ]
+# ---------------------- UPDATE COMPLAINT STATUS ----------------------
 @app.patch("/complaints/update-status")
 def update_complaint_status(data: UpdateComplaintStatusSchema, db: Session = Depends(get_db)):
     # Get the complaint
@@ -664,3 +667,40 @@ def get_user_profile(user_id: str, db: Session = Depends(get_db), request: Reque
             "profile_image_url": image_url
         }
     }
+
+# ---------------------- CHANGE PASSWORD ----------------------
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+@app.post("/change-password")
+def change_password(
+    user_id: str = Form(...),
+    old_password: str = Form(...),
+    new_password: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user_id UUID")
+
+    user = db.query(User).filter(User.id == user_uuid).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not user.password:
+        raise HTTPException(status_code=400, detail="User has no password set")
+
+    # Truncate to 72 characters to match bcrypt limitation
+    old_password_trunc = old_password[:72]
+    new_password_trunc = new_password[:72]
+
+    # Verify old password
+    if not pwd_context.verify(old_password_trunc, user.password):
+        raise HTTPException(status_code=400, detail="Incorrect old password")
+
+    # Hash new password and save
+    user.password = pwd_context.hash(new_password_trunc)
+    db.commit()
+    db.refresh(user)
+
+    return {"message": "Password changed successfully"}
