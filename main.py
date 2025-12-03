@@ -229,7 +229,6 @@ def update_employee_id(user_id: str, data: UpdateEmployeeIDSchema, db: Session =
     db.commit()
     db.refresh(user)
     return {"message": "Employee ID updated successfully"}
-
 # ---------------------- CREATE COMPLAINT ----------------------
 @app.post("/complaints")
 def submit_complaint(data: ComplaintCreateSchema, db: Session = Depends(get_db)):
@@ -251,7 +250,47 @@ def submit_complaint(data: ComplaintCreateSchema, db: Session = Depends(get_db))
     db.commit()
     db.refresh(new_complaint)
 
-    return {"message": "Complaint submitted successfully", "complaint_id": str(new_complaint.id)}
+    # ----------------------------------------
+    # CREATE NOTIFICATION FOR ADMIN
+    # ----------------------------------------
+    admin = db.query(User).filter(User.role == "admin").first()
+    notification_admin = None
+    if admin:
+        notification_admin = Notification(
+            user_id=admin.id,
+            sender_id=user.id,  # the user who submitted the complaint
+            complaint_id=new_complaint.id,
+            type="new_complaint",
+            title="New Complaint Submitted",
+            message=f"User '{user.fullname}' submitted a new complaint: '{new_complaint.title}'.",
+        )
+        db.add(notification_admin)
+
+    # ----------------------------------------
+    # OPTIONAL: CREATE NOTIFICATION FOR USER
+    # ----------------------------------------
+    notification_user = Notification(
+        user_id=user.id,
+        sender_id=None,  # system
+        complaint_id=new_complaint.id,
+        type="submitted",
+        title="Complaint Submitted",
+        message=f"Your complaint '{new_complaint.title}' has been submitted successfully.",
+    )
+    db.add(notification_user)
+
+    db.commit()
+    if admin:
+        db.refresh(notification_admin)
+    db.refresh(notification_user)
+
+    return {
+        "message": "Complaint submitted successfully",
+        "complaint_id": str(new_complaint.id),
+        "notification_admin_id": str(notification_admin.id) if admin else None,
+        "notification_user_id": str(notification_user.id)
+    }
+
 # ---------------------- GET ALL COMPLAINTS ----------------------
 @app.get("/complaints")
 def get_all_complaints(db: Session = Depends(get_db)):
@@ -546,9 +585,9 @@ def update_complaint_status(data: UpdateComplaintStatusSchema, db: Session = Dep
     # Get user info
     user = db.query(User).filter(User.id == complaint.user_id).first()
 
-    # ----------------------------------------
+    # ------------------------------
     # CREATE NOTIFICATION FOR USER IF DONE
-    # ----------------------------------------
+    # ------------------------------
     notification_user = None
     if complaint.status.lower() == "done" and user:
         notification_user = Notification(
@@ -560,7 +599,24 @@ def update_complaint_status(data: UpdateComplaintStatusSchema, db: Session = Dep
             message=f"Your complaint '{complaint.title}' has been marked as done by the assigned employee.",
         )
         db.add(notification_user)
-        db.commit()
+
+    # ------------------------------
+    # CREATE NOTIFICATION FOR ADMIN IF DONE
+    # ------------------------------
+    admins = db.query(User).filter(User.role == "admin").all()
+    for admin in admins:
+        notification_admin = Notification(
+            user_id=admin.id,
+            sender_id=employee.id,  # UUID of employee
+            complaint_id=complaint.id,
+            type="done",
+            title="Complaint Completed by Employee",
+            message=f"The complaint '{complaint.title}' submitted by {user.fullname} has been marked as done by {employee.fullname}.",
+        )
+        db.add(notification_admin)
+
+    db.commit()  # Commit both user and admin notifications
+    if notification_user:
         db.refresh(notification_user)
 
     return {
@@ -574,7 +630,7 @@ def update_complaint_status(data: UpdateComplaintStatusSchema, db: Session = Dep
             "assigned_to": complaint.assigned_to,
             "notes": complaint.notes
         },
-        "notification_id": str(notification_user.id) if notification_user else None
+        "notification_id_user": str(notification_user.id) if notification_user else None
     }
 
 # ---------------------- STATIC FILES ----------------------
