@@ -276,8 +276,6 @@ def get_all_complaints(db: Session = Depends(get_db)):
         })
 
     return response
-
-# ---------------------- ASSIGN COMPLAINT ----------------------
 @app.put("/complaints/{complaint_id}/assign")
 def assign_complaint(complaint_id: UUID, data: AssignComplaintSchema, db: Session = Depends(get_db)):
     complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
@@ -300,23 +298,37 @@ def assign_complaint(complaint_id: UUID, data: AssignComplaintSchema, db: Sessio
     # ----------------------------------------
     # CREATE NOTIFICATION FOR EMPLOYEE
     # ----------------------------------------
-    notification = Notification(
-        user_id=employee.id,             # employee receives it
-        sender_id=None,                  # system or admin
+    notification_employee = Notification(
+        user_id=employee.id,
+        sender_id=None,
         complaint_id=complaint.id,
         type="assigned",
         title="New Task Assigned",
         message=f"You have been assigned to complaint: {complaint.title}",
     )
+    db.add(notification_employee)
 
-    db.add(notification)
+    # ----------------------------------------
+    # CREATE NOTIFICATION FOR USER
+    # ----------------------------------------
+    notification_user = Notification(
+        user_id=complaint.user_id,
+        sender_id=None,
+        complaint_id=complaint.id,
+        type="assigned",
+        title="Your Complaint Has Been Assigned",
+        message=f"Your complaint '{complaint.title}' has been assigned to {employee.fullname}.",
+    )
+    db.add(notification_user)
+
     db.commit()
-    db.refresh(notification)
+    db.refresh(notification_employee)
+    db.refresh(notification_user)
 
-    # Return once, after everything is done
     return {
         "message": f"Complaint assigned to {employee.fullname} successfully",
-        "notification_id": str(notification.id)
+        "employee_notification_id": str(notification_employee.id),
+        "user_notification_id": str(notification_user.id)
     }
 
 # ---------------------- GET ALL EMPLOYEES ----------------------
@@ -514,8 +526,13 @@ def update_complaint_status(data: UpdateComplaintStatusSchema, db: Session = Dep
     if not complaint:
         raise HTTPException(status_code=404, detail="Complaint not found")
     
+    # Get the employee by employee_id string
+    employee = db.query(User).filter(User.employee_id == data.employee_id, User.role == "employee").first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    
     # Verify employee is assigned
-    if complaint.assigned_to != data.employee_id:
+    if complaint.assigned_to != employee.employee_id:
         raise HTTPException(status_code=403, detail="You are not assigned to this complaint")
     
     # Update status and notes
@@ -526,8 +543,25 @@ def update_complaint_status(data: UpdateComplaintStatusSchema, db: Session = Dep
     db.commit()
     db.refresh(complaint)
 
-    # Get user fullname
+    # Get user info
     user = db.query(User).filter(User.id == complaint.user_id).first()
+
+    # ----------------------------------------
+    # CREATE NOTIFICATION FOR USER IF DONE
+    # ----------------------------------------
+    notification_user = None
+    if complaint.status.lower() == "done" and user:
+        notification_user = Notification(
+            user_id=user.id,
+            sender_id=employee.id,  # UUID of employee
+            complaint_id=complaint.id,
+            type="done",
+            title="Your Complaint Is Completed",
+            message=f"Your complaint '{complaint.title}' has been marked as done by the assigned employee.",
+        )
+        db.add(notification_user)
+        db.commit()
+        db.refresh(notification_user)
 
     return {
         "message": "Complaint updated successfully",
@@ -539,7 +573,8 @@ def update_complaint_status(data: UpdateComplaintStatusSchema, db: Session = Dep
             "status": complaint.status,
             "assigned_to": complaint.assigned_to,
             "notes": complaint.notes
-        }
+        },
+        "notification_id": str(notification_user.id) if notification_user else None
     }
 
 # ---------------------- STATIC FILES ----------------------
@@ -772,3 +807,28 @@ def get_notifications(user_id: UUID, db: Session = Depends(get_db)):
         "notifications": notifications_list,
         "unread_count": unread_count
     }
+# ---------------------- REJECT COMPLAINT ----------------------
+@app.put("/complaints/{complaint_id}/reject")
+def reject_complaint(complaint_id: UUID, db: Session = Depends(get_db)):
+    complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
+    if not complaint:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+
+    complaint.status = "rejected"
+    db.commit()
+    db.refresh(complaint)
+
+    # Notification for user
+    notification_user = Notification(
+        user_id=complaint.user_id,
+        sender_id=None,
+        complaint_id=complaint.id,
+        type="rejected",
+        title="Your Complaint Has Been Rejected",
+        message=f"Your complaint '{complaint.title}' has been rejected.",
+    )
+    db.add(notification_user)
+    db.commit()
+    db.refresh(notification_user)
+
+    return {"message": "Complaint rejected", "notification_id": str(notification_user.id)}
