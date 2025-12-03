@@ -31,6 +31,8 @@ import asyncio
 from fastapi.staticfiles import StaticFiles
 from fastapi import Request
 from sqlalchemy import or_
+from utils.notifications import create_notification
+from models import Notification
 
 
 
@@ -280,18 +282,42 @@ def get_all_complaints(db: Session = Depends(get_db)):
 def assign_complaint(complaint_id: UUID, data: AssignComplaintSchema, db: Session = Depends(get_db)):
     complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
     if not complaint:
-        raise HTTPException(404, "Complaint not found")
+        raise HTTPException(status_code=404, detail="Complaint not found")
 
-    employee = db.query(User).filter(User.employee_id == data.employee_id, User.role == "employee").first()
+    employee = db.query(User).filter(
+        User.employee_id == data.employee_id,
+        User.role == "employee"
+    ).first()
     if not employee:
-        raise HTTPException(404, "Employee not found")
+        raise HTTPException(status_code=404, detail="Employee not found")
 
+    # Assign complaint
     complaint.assigned_to = data.employee_id
     complaint.status = "assigned"
     db.commit()
     db.refresh(complaint)
 
-    return {"message": f"Complaint assigned to {employee.fullname} successfully"}
+    # ----------------------------------------
+    # CREATE NOTIFICATION FOR EMPLOYEE
+    # ----------------------------------------
+    notification = Notification(
+        user_id=employee.id,             # employee receives it
+        sender_id=None,                  # system or admin
+        complaint_id=complaint.id,
+        type="assigned",
+        title="New Task Assigned",
+        message=f"You have been assigned to complaint: {complaint.title}",
+    )
+
+    db.add(notification)
+    db.commit()
+    db.refresh(notification)
+
+    # Return once, after everything is done
+    return {
+        "message": f"Complaint assigned to {employee.fullname} successfully",
+        "notification_id": str(notification.id)
+    }
 
 # ---------------------- GET ALL EMPLOYEES ----------------------
 @app.get("/employees", response_model=list[dict])
@@ -715,3 +741,34 @@ def change_password(
     db.refresh(user)
 
     return {"message": "Password changed successfully"}
+
+# ---------------------- GET USER NOTIFICATIONS ----------------------
+
+@app.get("/notifications/{user_id}")
+def get_notifications(user_id: UUID, db: Session = Depends(get_db)):
+    notifications = db.query(Notification)\
+        .filter(Notification.user_id == user_id)\
+        .order_by(Notification.created_at.desc())\
+        .all()
+
+    if notifications is None:
+        raise HTTPException(status_code=404, detail="No notifications found")
+
+    # Convert to JSON-friendly dicts
+    notifications_list = []
+    for n in notifications:
+        notifications_list.append({
+            "id": str(n.id),
+            "title": n.title,
+            "message": n.message,
+            "type": n.type,
+            "created_at": n.created_at.isoformat() if n.created_at else None,
+            "is_read": n.is_read
+        })
+
+    unread_count = sum(1 for n in notifications if n.is_read == 0)
+
+    return {
+        "notifications": notifications_list,
+        "unread_count": unread_count
+    }

@@ -92,3 +92,53 @@ class UserProfile(Base):
 
     # Relationship to user (optional)
     user = relationship("User", backref="profile")
+
+# ------------------------------------notifications TABLE
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()")
+    )
+
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False
+    )
+
+    sender_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True
+    )
+
+    complaint_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("complaints.id"),
+        nullable=True
+    )
+
+    type = Column(String(50), nullable=False)
+    title = Column(String(255), nullable=False)
+    message = Column(String, nullable=False)
+
+    is_read = Column(
+        Integer,
+        default=0,
+        server_default=text("0")
+    )
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+
+    read_at = Column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    sender = relationship("User", foreign_keys=[sender_id])
+    complaint = relationship("Complaint", foreign_keys=[complaint_id])
