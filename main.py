@@ -182,7 +182,18 @@ def read_me(current_user: User = Depends(get_current_user)):
 # ---------------------- GET ALL USERS ----------------------
 @app.get("/users", response_model=list[UserResponse])
 def get_all_users(db: Session = Depends(get_db)):
-    return db.query(User).all()
+    users = db.query(User).all()
+    return [
+        UserResponse(
+            id=user.id,
+            fullname=user.fullname,
+            phone=user.phone,
+            email=user.email if user.email and "@" in user.email else None,
+            role=user.role,
+            employee_id=user.employee_id
+        )
+        for user in users
+    ]
 
 # ---------------------- UPDATE ROLE ----------------------
 @app.put("/users/{user_id}/role")
