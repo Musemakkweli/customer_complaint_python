@@ -1,14 +1,43 @@
-from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, APIRouter
+# -------------------- IMPORTS --------------------
+import os
+import shutil
+import random
+import asyncio
+from uuid import UUID
+from datetime import datetime, timedelta
+
+from fastapi import (
+    FastAPI, UploadFile, File, Form, Depends, HTTPException,
+    APIRouter, WebSocket, WebSocketDisconnect, Request
+)
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi_mail import ConnectionConfig, FastMail, MessageSchema
+
 from sqlalchemy.orm import Session
-from uuid import UUID
-import shutil
+from sqlalchemy import or_, func
+
+from passlib.context import CryptContext
+import jwt
+
+# -------------------- LOAD ENVIRONMENT --------------------
+from dotenv import load_dotenv
+
+# Use the full path to your .env file
+load_dotenv(dotenv_path=r"H:\customer_complaint_backend\.env")
+
+# Debug: check if env variables are loaded correctly
+print("MAIL_USERNAME:", os.getenv("MAIL_USERNAME"))
+print("MAIL_PASSWORD:", os.getenv("MAIL_PASSWORD"))
+print("MAIL_SERVER:", os.getenv("MAIL_SERVER"))
+print("MAIL_FROM:", os.getenv("MAIL_FROM"))
+
+# -------------------- DATABASE AND MODELS --------------------
 from database import engine, SessionLocal, Base
-from models import UserProfile, User
-from schemas import UserProfileCreateSchema
-from models import User, Complaint
+from models import UserProfile, User, Complaint, Notification, UserOTP
 from schemas import (
+    UserProfileCreateSchema,
     RegisterSchema,
     LoginSchema,
     UserResponse,
@@ -18,44 +47,24 @@ from schemas import (
     ComplaintResponseSchema,
     EmployeeSchema,
     AssignComplaintSchema,
-    UpdateComplaintStatusSchema 
+    UpdateComplaintStatusSchema
 )
-
-
-from datetime import datetime, timedelta
-import os
-import jwt
-from passlib.context import CryptContext
-from fastapi import WebSocket, WebSocketDisconnect
-import asyncio
-from fastapi.staticfiles import StaticFiles
-from fastapi import Request
-from sqlalchemy import or_
 from utils.notifications import create_notification
-from models import Notification
-from sqlalchemy import func
-from fastapi_mail import ConnectionConfig, FastMail
+
+# -------------------- EMAIL CONFIGURATION --------------------
 conf = ConnectionConfig(
-    MAIL_USERNAME="9d4c26001@smtp-brevo.com",
-    MAIL_PASSWORD="VrGtj5y9xYLIQq8J",
-    MAIL_FROM="musemakwelibelyse@gmail.com",  # <- COMMA added
-    MAIL_PORT=587,
-    MAIL_SERVER="smtp-relay.brevo.com",
-    MAIL_STARTTLS=True,     # Use TLS
-    MAIL_SSL_TLS=False,     # SSL not used here
-    USE_CREDENTIALS=True,
-    VALIDATE_CERTS=True
+    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
+    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
+    MAIL_FROM=os.getenv("MAIL_FROM"),
+    MAIL_PORT=int(os.getenv("MAIL_PORT", 587)),  # default to 587
+    MAIL_SERVER=os.getenv("MAIL_SERVER"),
+    MAIL_STARTTLS=os.getenv("MAIL_STARTTLS") == "True",
+    MAIL_SSL_TLS=os.getenv("MAIL_SSL_TLS") == "True",
+    USE_CREDENTIALS=os.getenv("USE_CREDENTIALS") == "True",
+    VALIDATE_CERTS=os.getenv("VALIDATE_CERTS") == "True"
 )
 
 fm = FastMail(conf)
-
-import random
-import asyncio
-from models import UserOTP, User  # Adjust 'models' to your actual models.py filename/path
-from fastapi_mail import MessageSchema
-
-
-
 
 # ---------------------- CONFIGURATION ----------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-please")
