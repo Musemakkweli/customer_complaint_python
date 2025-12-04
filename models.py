@@ -142,3 +142,31 @@ class Notification(Base):
     user = relationship("User", foreign_keys=[user_id])
     sender = relationship("User", foreign_keys=[sender_id])
     complaint = relationship("Complaint", foreign_keys=[complaint_id])
+    
+  # ------------------------------------ USER OTP TABLE
+class UserOTP(Base):
+    __tablename__ = "user_otps"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()")
+    )
+
+    email = Column(String, nullable=False)  # <-- Add email field
+
+    otp = Column(String(6), nullable=False)
+
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+
+    is_used = Column(
+        Integer,
+        default=0,
+        server_default=text("0")
+    )
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )

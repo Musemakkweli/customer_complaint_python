@@ -33,6 +33,27 @@ from fastapi import Request
 from sqlalchemy import or_
 from utils.notifications import create_notification
 from models import Notification
+from sqlalchemy import func
+from fastapi_mail import ConnectionConfig, FastMail
+conf = ConnectionConfig(
+    MAIL_USERNAME="9d4c26001@smtp-brevo.com",
+    MAIL_PASSWORD="VrGtj5y9xYLIQq8J",
+    MAIL_FROM="musemakwelibelyse@gmail.com",  # <- COMMA added
+    MAIL_PORT=587,
+    MAIL_SERVER="smtp-relay.brevo.com",
+    MAIL_STARTTLS=True,     # Use TLS
+    MAIL_SSL_TLS=False,     # SSL not used here
+    USE_CREDENTIALS=True,
+    VALIDATE_CERTS=True
+)
+
+fm = FastMail(conf)
+
+import random
+import asyncio
+from models import UserOTP, User  # Adjust 'models' to your actual models.py filename/path
+from fastapi_mail import MessageSchema
+
 
 
 
@@ -888,3 +909,58 @@ def reject_complaint(complaint_id: UUID, db: Session = Depends(get_db)):
     db.refresh(notification_user)
 
     return {"message": "Complaint rejected", "notification_id": str(notification_user.id)}
+  
+# ---------------------- MARK NOTIFICATION AS READ ----------------------
+@app.put("/notifications/{notification_id}/read")
+def mark_notification_as_read(notification_id: UUID, db: Session = Depends(get_db)):
+    notification = db.query(Notification).filter(Notification.id == notification_id).first()
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    
+    notification.is_read = 1
+    notification.read_at = func.now()
+    db.commit()
+    db.refresh(notification)
+
+    return {"message": "Notification marked as read"}
+
+# -------------------- SEND OTP --------------------
+@app.post("/send-otp")
+async def send_otp(email: str, db: Session = Depends(get_db)):
+    otp_code = str(random.randint(100000, 999999))
+    expires_at = datetime.utcnow() + timedelta(minutes=5)
+
+    # Create OTP record
+    user_otp = UserOTP(email=email, otp=otp_code, expires_at=expires_at)
+    db.add(user_otp)
+    db.commit()
+    db.refresh(user_otp)
+
+    # Send email
+    message = MessageSchema(
+        subject="Your OTP Code",
+        recipients=[email],
+        body=f"Your OTP is {otp_code}. It expires in 5 minutes.",
+        subtype="plain"
+    )
+    await fm.send_message(message)  # Use await in async function
+
+    return {"message": f"OTP sent to {email}"}
+
+# -------------------- VERIFY OTP --------------------
+@app.post("/verify-otp")
+def verify_otp(email: str, otp: str, db: Session = Depends(get_db)):
+    otp_record = db.query(UserOTP).filter(
+        UserOTP.email == email,
+        UserOTP.otp == otp,
+        UserOTP.is_used == 0,
+        UserOTP.expires_at >= datetime.utcnow()
+    ).first()
+
+    if not otp_record:
+        raise HTTPException(400, "Invalid or expired OTP")
+
+    otp_record.is_used = 1
+    db.commit()
+
+    return {"message": "OTP verified successfully"}
