@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 
 from passlib.context import CryptContext
+import bcrypt
 import jwt
 
 # -------------------- LOAD ENVIRONMENT --------------------
@@ -71,7 +72,32 @@ SECRET_KEY = os.getenv("SECRET_KEY", "change-me-please")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60))
 
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+pwd_context = CryptContext(
+    schemes=["argon2", "pbkdf2_sha256"],
+    deprecated="auto"
+)
+
+BCRYPT_MAX_BYTES = 72
+BCRYPT_PREFIXES = ("$2a$", "$2b$", "$2y$")
+
+def _is_bcrypt_hash(hash_value: str | None) -> bool:
+    return bool(hash_value) and hash_value.startswith(BCRYPT_PREFIXES)
+
+def _bcrypt_safe_password_bytes(password: str) -> bytes:
+    return password.encode("utf-8")[:BCRYPT_MAX_BYTES]
+
+def _verify_bcrypt_password(password: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(_bcrypt_safe_password_bytes(password), hashed.encode("utf-8"))
+    except ValueError:
+        return False
+
+def _verify_password(password: str, hashed: str | None) -> bool:
+    if not hashed:
+        return False
+    if _is_bcrypt_hash(hashed):
+        return _verify_bcrypt_password(password, hashed)
+    return pwd_context.verify(password, hashed)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 Base.metadata.create_all(bind=engine)
@@ -165,8 +191,6 @@ def register(data: RegisterSchema, db: Session = Depends(get_db)):
 
 # ---------------------- LOGIN ----------------------
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 @app.post("/login")
 def login(data: LoginSchema, db: Session = Depends(get_db)):
     # Find user by email or employee ID
@@ -177,9 +201,18 @@ def login(data: LoginSchema, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Verify password against hash
-    if not pwd_context.verify(data.password, user.password):
+    # Verify password against hash (handle legacy bcrypt separately)
+    if not _verify_password(data.password, user.password):
         raise HTTPException(status_code=400, detail="Incorrect password")
+
+    needs_rehash = (
+        _is_bcrypt_hash(user.password)
+        or pwd_context.needs_update(user.password)
+    )
+    if needs_rehash:
+        user.password = pwd_context.hash(data.password)
+        db.commit()
+        db.refresh(user)
     
     login_identifier = user.email if user.role in ["customer", "admin"] else user.employee_id
     
@@ -827,8 +860,6 @@ def get_user_profile(user_id: str, db: Session = Depends(get_db), request: Reque
     }
 
 # ---------------------- CHANGE PASSWORD ----------------------
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 @app.post("/change-password")
 def change_password(
     user_id: str = Form(...),
@@ -848,16 +879,11 @@ def change_password(
     if not user.password:
         raise HTTPException(status_code=400, detail="User has no password set")
 
-    # Truncate to 72 characters to match bcrypt limitation
-    old_password_trunc = old_password[:72]
-    new_password_trunc = new_password[:72]
-
-    # Verify old password
-    if not pwd_context.verify(old_password_trunc, user.password):
+    if not _verify_password(old_password, user.password):
         raise HTTPException(status_code=400, detail="Incorrect old password")
 
-    # Hash new password and save
-    user.password = pwd_context.hash(new_password_trunc)
+    # Hash new password using Argon2/pbkdf2 context
+    user.password = pwd_context.hash(new_password)
     db.commit()
     db.refresh(user)
 
