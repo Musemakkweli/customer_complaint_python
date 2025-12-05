@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, model_validator
 from typing import Optional, Literal
 from uuid import UUID
 
@@ -14,8 +14,15 @@ class RegisterSchema(BaseModel):
     role: str = "customer"
 
 class LoginSchema(BaseModel):
-    email: str
+    email: Optional[str] = None
+    employee_id: Optional[str] = None
     password: str
+
+    @model_validator(mode="after")
+    def ensure_identifier(self):
+        if not self.email and not self.employee_id:
+            raise ValueError("Either email or employee_id must be provided")
+        return self
 
 # -----------------------------
 # User Response & Update Schemas

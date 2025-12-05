@@ -193,10 +193,20 @@ def register(data: RegisterSchema, db: Session = Depends(get_db)):
 
 @app.post("/login")
 def login(data: LoginSchema, db: Session = Depends(get_db)):
-    # Find user by email or employee ID
-    user = db.query(User).filter(
-        or_(User.email == data.email, User.employee_id == data.email)
-    ).first()
+    filters = []
+    if data.employee_id:
+        filters.append(User.employee_id == data.employee_id)
+
+    if data.email:
+        if "@" in data.email:
+            filters.append(User.email == data.email)
+        else:
+            filters.append(User.employee_id == data.email)
+
+    if not filters:
+        raise HTTPException(status_code=400, detail="Email/identifier is required for login")
+
+    user = db.query(User).filter(or_(*filters)).first()
     
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
