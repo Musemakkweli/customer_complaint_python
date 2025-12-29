@@ -4,6 +4,8 @@ from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from database import Base
 import uuid
+from pydantic import BaseModel
+
 
 
 # ------------------------------------
@@ -170,3 +172,5 @@ class UserOTP(Base):
         DateTime(timezone=True),
         server_default=func.now()
     )
+class OTPRequest(BaseModel):
+    email: str

@@ -99,3 +99,4 @@ class UserProfileCreateSchema(BaseModel):
     cell: str
     village: str
     profile_image: Optional[str] = None 
+    

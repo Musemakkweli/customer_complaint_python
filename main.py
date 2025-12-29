@@ -3,6 +3,7 @@ import os
 import shutil
 import random
 import asyncio
+from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime, timedelta
 
@@ -968,27 +969,30 @@ def mark_notification_as_read(notification_id: UUID, db: Session = Depends(get_d
     db.refresh(notification)
 
     return {"message": "Notification marked as read"}
+             
+# ---------------------- SEND OTP ----------------------
 
-# -------------------- SEND OTP --------------------
+class OTPRequest(BaseModel):
+    email: str
+# ---------------
 @app.post("/send-otp")
-async def send_otp(email: str, db: Session = Depends(get_db)):
+async def send_otp(request: OTPRequest, db: Session = Depends(get_db)):
+    email = request.email
     otp_code = str(random.randint(100000, 999999))
     expires_at = datetime.utcnow() + timedelta(minutes=5)
 
-    # Create OTP record
     user_otp = UserOTP(email=email, otp=otp_code, expires_at=expires_at)
     db.add(user_otp)
     db.commit()
     db.refresh(user_otp)
 
-    # Send email
     message = MessageSchema(
         subject="Your OTP Code",
         recipients=[email],
         body=f"Your OTP is {otp_code}. It expires in 5 minutes.",
         subtype="plain"
     )
-    await fm.send_message(message)  # Use await in async function
+    await fm.send_message(message)
 
     return {"message": f"OTP sent to {email}"}
 
@@ -1009,3 +1013,52 @@ def verify_otp(email: str, otp: str, db: Session = Depends(get_db)):
     db.commit()
 
     return {"message": "OTP verified successfully"}
+
+# ---------------------- USER COMPLAINT TREND ----------------------
+@app.get("/complaints/trend/user/{user_id}")
+def user_complaint_trend(user_id: UUID, db: Session = Depends(get_db)):
+    """
+    Returns the number of complaints submitted by a user for each of the last 7 days.
+    """
+    today = datetime.utcnow().date()
+    trend = []
+
+    # Loop through last 7 days
+    for i in range(6, -1, -1):  # from 6 days ago to today
+        day = today - timedelta(days=i)
+        count = db.query(Complaint).filter(
+            Complaint.user_id == user_id,
+            Complaint.created_at >= datetime.combine(day, datetime.min.time()),
+            Complaint.created_at <= datetime.combine(day, datetime.max.time())
+        ).count()
+        trend.append({"day": day.strftime("%a"), "count": count})
+
+    return {"user_id": str(user_id), "trend": trend}
+
+# ---------------------- RECENT COMMON COMPLAINTS ----------------------
+@app.get("/complaints/recent/common")
+def recent_common_complaints(
+    db: Session = Depends(get_db),
+    limit: int = 5
+):
+    complaints = (
+        db.query(Complaint, User)
+        .join(User, User.id == Complaint.user_id)
+        .filter(Complaint.complaint_type == "common")
+        .order_by(Complaint.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    result = [
+        {
+            "id": str(complaint.id),
+            "user_name": user.fullname,   # ✅ works
+            "title": complaint.title,
+            "status": complaint.status.capitalize()
+        }
+        for complaint, user in complaints
+    ]
+
+    return {"recent_common_complaints": result}
+
