@@ -100,3 +100,14 @@ class UserProfileCreateSchema(BaseModel):
     village: str
     profile_image: Optional[str] = None 
     
+
+class UserProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    province: Optional[str] = None
+    district: Optional[str] = None
+    sector: Optional[str] = None
+    cell: Optional[str] = None
+    village: Optional[str] = None
+    about: Optional[str] = None

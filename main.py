@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 from fastapi import (
     FastAPI, UploadFile, File, Form, Depends, HTTPException,
-    APIRouter, WebSocket, WebSocketDisconnect, Request
+    APIRouter, WebSocket, WebSocketDisconnect, Request, Body
 )
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,7 +49,8 @@ from schemas import (
     ComplaintResponseSchema,
     EmployeeSchema,
     AssignComplaintSchema,
-    UpdateComplaintStatusSchema
+    UpdateComplaintStatusSchema,
+    UserProfileUpdate
 )
 from utils.notifications import create_notification
 
@@ -303,6 +304,7 @@ def update_employee_id(user_id: str, data: UpdateEmployeeIDSchema, db: Session =
     db.commit()
     db.refresh(user)
     return {"message": "Employee ID updated successfully"}
+
 # ---------------------- CREATE COMPLAINT ----------------------
 @app.post("/complaints")
 def submit_complaint(data: ComplaintCreateSchema, db: Session = Depends(get_db)):
@@ -1062,3 +1064,102 @@ def recent_common_complaints(
 
     return {"recent_common_complaints": result}
 
+# ---------------------- UPDATE USER PROFILE ----------------------
+
+UPLOAD_DIR = "uploads/profile_images"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+from fastapi import Form
+
+@app.put("/user-profile/{user_id}", response_model=dict)
+async def update_user_profile(
+    user_id: str,
+    name: str | None = Form(None),
+    email: str | None = Form(None),
+    phone: str | None = Form(None),
+    province: str | None = Form(None),
+    district: str | None = Form(None),
+    sector: str | None = Form(None),
+    cell: str | None = Form(None),
+    village: str | None = Form(None),
+    about: str | None = Form(None),
+    profile_image: UploadFile | None = File(None),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    # Validate UUID
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID format")
+
+    # Fetch user
+    user = db.query(User).filter(User.id == user_uuid).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Fetch user profile
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user_uuid).first()
+
+    # ---- Update User fields ----
+    if name is not None:
+        user.fullname = name
+    if email is not None:
+        user.email = email
+    if phone is not None:
+        user.phone = phone
+
+    # ---- Update UserProfile fields ----
+    if profile:
+        profile.province = province or profile.province
+        profile.district = district or profile.district
+        profile.sector = sector or profile.sector
+        profile.cell = cell or profile.cell
+        profile.village = village or profile.village
+        profile.about = about or profile.about
+    else:
+        profile = UserProfile(
+            user_id=user_uuid,
+            province=province or "",
+            district=district or "",
+            sector=sector or "",
+            cell=cell or "",
+            village=village or "",
+            about=about or "",
+        )
+        db.add(profile)
+
+    # ---- Handle profile image upload ----
+    if profile_image:
+        filename = f"{user_id}_{profile_image.filename}"
+        file_path = os.path.join(UPLOAD_DIR, filename)
+        with open(file_path, "wb") as f:
+            f.write(await profile_image.read())
+        profile.profile_image = file_path  # Save path in DB
+
+    db.commit()
+    db.refresh(user)
+    db.refresh(profile)
+
+    # Build public image URL
+    base_url = str(request.base_url).rstrip("/") if request else ""
+    image_url = f"{base_url}/{profile.profile_image}" if profile.profile_image else None
+
+    return {
+        "message": "Profile updated successfully",
+        "user": {
+            "id": str(user.id),
+            "fullname": user.fullname,
+            "email": user.email,
+            "phone": user.phone,
+        },
+        "profile": {
+            "province": profile.province,
+            "district": profile.district,
+            "sector": profile.sector,
+            "cell": profile.cell,
+            "village": profile.village,
+            "about": profile.about,
+            "profile_image_url": image_url,
+        }
+    }
