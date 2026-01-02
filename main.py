@@ -718,8 +718,10 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 from uuid import UUID
 # ---------------------- CREATE OR UPDATE USER PROFILE ----------------------
 
+
 UPLOAD_DIR = "uploads/profile_images"
-ALLOWED_EXTENSIONS = ["png", "jpg", "jpeg"]
+ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}  # allowed image types
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @app.post("/user-profile")
 async def create_or_update_user_profile(
@@ -733,13 +735,10 @@ async def create_or_update_user_profile(
     cell: str = Form(...),
     village: str = Form(...),
     about: str = Form(None),
-    profile_image: UploadFile = File(None),
+    profile_image: UploadFile | None = File(None),
     db: Session = Depends(get_db),
     request: Request = None
 ):
-    # Ensure upload directory exists
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-
     # Convert user_id to UUID
     try:
         user_uuid = UUID(user_id)
@@ -751,7 +750,7 @@ async def create_or_update_user_profile(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Handle file upload
+    # ---- Handle file upload ----
     image_url = None
     if profile_image:
         file_ext = profile_image.filename.split(".")[-1].lower()
@@ -759,17 +758,21 @@ async def create_or_update_user_profile(
             raise HTTPException(status_code=400, detail="Invalid file type")
         filename = f"{user_id}.{file_ext}"
         file_path = os.path.join(UPLOAD_DIR, filename)
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(profile_image.file, buffer)
-        base_url = str(request.base_url).rstrip("/")
-        image_url = f"{base_url}/uploads/profile_images/{filename}"
 
-    # Update user info
+        # Save file asynchronously
+        with open(file_path, "wb") as f:
+            f.write(await profile_image.read())
+
+        # Save relative path in DB (forward slashes)
+        relative_path = f"profile_images/{filename}".replace("\\", "/")
+        image_url = f"{str(request.base_url).rstrip('/')}/uploads/{relative_path}"
+
+    # ---- Update user info ----
     user.fullname = fullname
     user.email = email
     user.phone = phone
 
-    # Create or update profile
+    # ---- Create or update profile ----
     profile = db.query(UserProfile).filter(UserProfile.user_id == user_uuid).first()
     if profile:
         profile.province = province
@@ -779,7 +782,7 @@ async def create_or_update_user_profile(
         profile.village = village
         profile.about = about
         if image_url:
-            profile.profile_image = image_url
+            profile.profile_image = relative_path  # store relative path
         message = "User profile updated successfully"
     else:
         profile = UserProfile(
@@ -790,7 +793,7 @@ async def create_or_update_user_profile(
             cell=cell,
             village=village,
             about=about,
-            profile_image=image_url
+            profile_image=relative_path if profile_image else None
         )
         db.add(profile)
         message = "User profile created successfully"
@@ -800,7 +803,9 @@ async def create_or_update_user_profile(
     db.refresh(user)
     db.refresh(profile)
 
-    # Return response
+    # Build final URL to send to frontend
+    public_image_url = f"{str(request.base_url).rstrip('/')}/uploads/{profile.profile_image}" if profile.profile_image else None
+
     return {
         "message": message,
         "user": {
@@ -818,7 +823,7 @@ async def create_or_update_user_profile(
             "cell": profile.cell,
             "village": profile.village,
             "about": profile.about,
-            "profile_image_url": profile.profile_image
+            "profile_image_url": public_image_url
         }
     }
 
@@ -829,7 +834,8 @@ from uuid import UUID
 from database import get_db
 from models import User, UserProfile  # import your models
 
-@app.get("/user-profile/{user_id}")
+# ---------------------- GET USER PROFILE ----------------------
+@app.get("/user-profile/{user_id}", response_model=dict)
 def get_user_profile(user_id: str, db: Session = Depends(get_db), request: Request = None):
     # Validate UUID
     try:
@@ -842,15 +848,14 @@ def get_user_profile(user_id: str, db: Session = Depends(get_db), request: Reque
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Fetch user profile (additional info)
+    # Fetch user profile
     profile = db.query(UserProfile).filter(UserProfile.user_id == user_uuid).first()
 
-    # Build profile image URL if available
+    # Build image URL
     image_url = None
     if profile and profile.profile_image:
         base_url = str(request.base_url).rstrip("/")
-        filename = profile.profile_image.split("/")[-1]
-        image_url = f"{base_url}/uploads/profile_images/{filename}"
+        image_url = f"{base_url}/uploads/{profile.profile_image}"
 
     return {
         "user": {
@@ -867,7 +872,7 @@ def get_user_profile(user_id: str, db: Session = Depends(get_db), request: Reque
             "sector": profile.sector if profile else None,
             "cell": profile.cell if profile else None,
             "village": profile.village if profile else None,
-            "about": profile.about if profile else None,            # Added about
+            "about": profile.about if profile else None,
             "profile_image_url": image_url
         }
     }
@@ -1144,6 +1149,175 @@ async def update_user_profile(
     # Build public image URL
     base_url = str(request.base_url).rstrip("/") if request else ""
     image_url = f"{base_url}/{profile.profile_image}" if profile.profile_image else None
+
+    return {
+        "message": "Profile updated successfully",
+        "user": {
+            "id": str(user.id),
+            "fullname": user.fullname,
+            "email": user.email,
+            "phone": user.phone,
+        },
+        "profile": {
+            "province": profile.province,
+            "district": profile.district,
+            "sector": profile.sector,
+            "cell": profile.cell,
+            "village": profile.village,
+            "about": profile.about,
+            "profile_image_url": image_url,
+        }
+    }
+
+# ---------------------- UPLOAD DIRECTORY ----------------------
+UPLOAD_DIR = "uploads/profile_images"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Mount uploads folder for public access
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+# ---------------------- UPDATE USER PROFILE ----------------------
+@app.put("/user-profile/{user_id}", response_model=dict)
+async def update_user_profile(
+    user_id: str,
+    name: str | None = Form(None),
+    email: str | None = Form(None),
+    phone: str | None = Form(None),
+    province: str | None = Form(None),
+    district: str | None = Form(None),
+    sector: str | None = Form(None),
+    cell: str | None = Form(None),
+    village: str | None = Form(None),
+    about: str | None = Form(None),
+    profile_image: UploadFile | None = File(None),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    # Validate UUID
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID format")
+
+    # Fetch user
+    user = db.query(User).filter(User.id == user_uuid).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Fetch user profile
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user_uuid).first()
+
+    # ---- Update User fields ----
+    if name is not None:
+        user.fullname = name
+    if email is not None:
+        user.email = email
+    if phone is not None:
+        user.phone = phone
+
+    # ---- Update UserProfile fields ----
+    if profile:
+        profile.province = province or profile.province
+        profile.district = district or profile.district
+        profile.sector = sector or profile.sector
+        profile.cell = cell or profile.cell
+        profile.village = village or profile.village
+        profile.about = about or profile.about
+    else:
+        profile = UserProfile(
+            user_id=user_uuid,
+            province=province or "",
+            district=district or "",
+            sector=sector or "",
+            cell=cell or "",
+            village=village or "",
+            about=about or "",
+        )
+        db.add(profile)
+
+# ---------------------- UPLOAD DIRECTORY ----------------------
+UPLOAD_DIR = "uploads/profile_images"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Mount uploads folder to serve images publicly
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+# ---------------------- UPDATE USER PROFILE ----------------------
+@app.put("/user-profile/{user_id}", response_model=dict)
+async def update_user_profile(
+    user_id: str,
+    name: str | None = Form(None),
+    email: str | None = Form(None),
+    phone: str | None = Form(None),
+    province: str | None = Form(None),
+    district: str | None = Form(None),
+    sector: str | None = Form(None),
+    cell: str | None = Form(None),
+    village: str | None = Form(None),
+    about: str | None = Form(None),
+    profile_image: UploadFile | None = File(None),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    # Validate UUID
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID format")
+
+    # Fetch user
+    user = db.query(User).filter(User.id == user_uuid).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Fetch user profile
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user_uuid).first()
+
+    # ---- Update User fields ----
+    if name is not None:
+        user.fullname = name
+    if email is not None:
+        user.email = email
+    if phone is not None:
+        user.phone = phone
+
+    # ---- Update UserProfile fields ----
+    if profile:
+        profile.province = province or profile.province
+        profile.district = district or profile.district
+        profile.sector = sector or profile.sector
+        profile.cell = cell or profile.cell
+        profile.village = village or profile.village
+        profile.about = about or profile.about
+    else:
+        profile = UserProfile(
+            user_id=user_uuid,
+            province=province or "",
+            district=district or "",
+            sector=sector or "",
+            cell=cell or "",
+            village=village or "",
+            about=about or "",
+        )
+        db.add(profile)
+
+    # ---- Handle profile image upload ----
+    if profile_image:
+        filename = f"{user_id}_{profile_image.filename}"
+        file_path = os.path.join(UPLOAD_DIR, filename)
+        # Save file to disk
+        with open(file_path, "wb") as f:
+            f.write(await profile_image.read())
+        # Save relative path with forward slashes
+        profile.profile_image = f"profile_images/{filename}".replace("\\", "/")
+
+    db.commit()
+    db.refresh(user)
+    db.refresh(profile)
+
+    # Build public URL
+    base_url = str(request.base_url).rstrip("/") if request else ""
+    image_url = f"{base_url}/uploads/{profile.profile_image}" if profile.profile_image else None
 
     return {
         "message": "Profile updated successfully",
