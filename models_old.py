@@ -5,8 +5,6 @@ from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from database import Base
 import uuid
-from pydantic import BaseModel
-
 
 # Cross-database UUID type
 class GUID(TypeDecorator):
@@ -59,7 +57,8 @@ class User(Base):
     role = Column(
         String(20),
         nullable=False,
-        default="customer"
+        default="customer",
+        server_default=text("'customer'")
     )  # customer, employee, admin
 
 
@@ -84,18 +83,20 @@ class Complaint(Base):
     complaint_type = Column(
         String(20),
         nullable=False,
-        default="common"
+        default="common",
+        server_default=text("'common'")
     )   # 'common' or 'private'
     status = Column(
         String(20),
         nullable=False,
-        default="pending"
+        default="pending",
+        server_default=text("'pending'")
     )
     address = Column(String(255), nullable=False)
     assigned_to = Column(String(50), nullable=True)  # Employee ID of the assigned employee
     created_at = Column(
         DateTime(timezone=True),
-        default=func.now()
+        server_default=func.now()
     )
     updated_at = Column(
         DateTime(timezone=True),
@@ -127,9 +128,10 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id = Column(
-        GUID(),
+        UUID(as_uuid=True),
         primary_key=True,
-        default=uuid.uuid4
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()")
     )
 
     user_id = Column(
@@ -156,27 +158,30 @@ class Notification(Base):
 
     is_read = Column(
         Integer,
-        default=0
+        default=0,
+        server_default=text("0")
     )
 
     created_at = Column(
         DateTime(timezone=True),
-        default=func.now()
+        server_default=func.now()
     )
 
-    # Relationship to user
-    user = relationship("User", foreign_keys=[user_id], backref="notifications")
+    read_at = Column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
     sender = relationship("User", foreign_keys=[sender_id])
-    complaint = relationship("Complaint", backref="notifications")
-
-
-class PasswordResetToken(Base):
-    __tablename__ = "password_reset_tokens"
+    complaint = relationship("Complaint", foreign_keys=[complaint_id])
+    
+  # ------------------------------------ USER OTP TABLE
+class UserOTP(Base):
+    __tablename__ = "user_otps"
 
     id = Column(
-        GUID(),
+        UUID(as_uuid=True),
         primary_key=True,
-        default=uuid.uuid4
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()")
     )
 
     email = Column(String, nullable=False)  # <-- Add email field
@@ -187,16 +192,11 @@ class PasswordResetToken(Base):
 
     is_used = Column(
         Integer,
-        default=0
+        default=0,
+        server_default=text("0")
     )
 
     created_at = Column(
         DateTime(timezone=True),
-        default=func.now()
+        server_default=func.now()
     )
-class OTPRequest(BaseModel):
-    email: str
-
-
-# Create UserOTP alias for compatibility with main.py imports
-UserOTP = PasswordResetToken
