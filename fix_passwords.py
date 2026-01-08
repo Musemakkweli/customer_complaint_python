@@ -6,7 +6,7 @@ from passlib.context import CryptContext
 from models import User  # make sure this matches your project
 
 # ----------------- CONFIG -----------------
-DATABASE_URL = "postgresql://customer_complaint_user:QzB8ypyjU3CatguHvU2A3KOaTItFztFD@dpg-d4a6e8fpm1nc73cm8qog-a.oregon-postgres.render.com/customer_complaint"
+DATABASE_URL = "postgresql://postgres.vlxwjiktowwzypadnzun:1NAzkfoMm0n0TPIl@aws-1-eu-central-2.pooler.supabase.com:6543/postgres?sslmode=require"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
