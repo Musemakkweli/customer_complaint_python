@@ -53,6 +53,7 @@ from schemas import (
     UserProfileUpdate
 )
 from utils.notifications import create_notification
+from supabase import create_client, Client
 
 # -------------------- EMAIL CONFIGURATION --------------------
 conf = ConnectionConfig(
@@ -1337,3 +1338,44 @@ async def update_user_profile(
             "profile_image_url": image_url,
         }
     }
+
+
+
+# ----------------- Supabase Config -----------------
+SUPABASE_URL = "https://bwxwqmtalpwizbukbqcb.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY = "sb_secret_g5_DZTmuG5e8M4fCx9jQ4Q_GLUJDJvP"
+BUCKET_NAME = "rossa"
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+# ----------------- Test Upload Endpoint -----------------
+@app.post("/upload-test/")
+async def upload_test(file: UploadFile = File(...)):
+    try:
+        # Save temp file locally
+        temp_file_path = f"temp_{file.filename}"
+        with open(temp_file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        file_path = f"test/{file.filename}"
+
+        # Delete first if exists (simulate upsert)
+        try:
+            supabase.storage.from_(BUCKET_NAME).remove([file_path])
+        except Exception:
+            pass
+
+        # Upload file
+        with open(temp_file_path, "rb") as f:
+            supabase.storage.from_(BUCKET_NAME).upload(file_path, f)
+
+        # Remove local temp file
+        os.remove(temp_file_path)
+
+        # Get public URL (Python SDK returns string)
+        public_url = supabase.storage.from_(BUCKET_NAME).get_public_url(file_path)
+
+        return {"message": "Upload successful", "url": public_url}
+
+    except Exception as e:
+        return {"error": str(e)}
