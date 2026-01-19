@@ -4,9 +4,9 @@ import shutil
 import random
 import asyncio
 from pydantic import BaseModel
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime, timedelta
-
+from pathlib import Path
 from fastapi import (
     FastAPI, UploadFile, File, Form, Depends, HTTPException,
     APIRouter, WebSocket, WebSocketDisconnect, Request, Body
@@ -307,26 +307,106 @@ def update_employee_id(user_id: str, data: UpdateEmployeeIDSchema, db: Session =
     return {"message": "Employee ID updated successfully"}
 
 # ---------------------- CREATE COMPLAINT ----------------------
+
+
+
+# -----------------------------
+# Ensure upload folder exists
+# -----------------------------
+UPLOAD_DIR = Path("uploads/complaints")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)  # create folder if missing
+
+
 @app.post("/complaints")
-def submit_complaint(data: ComplaintCreateSchema, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == data.user_id).first()
+def submit_complaint(
+    user_id: str = Form(...),
+    title: str = Form(...),
+    description: str = Form(None),
+    complaint_type: str = Form(...),
+    address: str = Form(...),
+    media: UploadFile = File(None),
+    db: Session = Depends(get_db)
+):
+    # -----------------------------
+    # 1. Validate user
+    # -----------------------------
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(404, "User not found")
+
     if user.role != "customer":
         raise HTTPException(403, "Only customers can submit complaints")
 
+    # -----------------------------
+    # 2. Validate content
+    # -----------------------------
+    if (not description or description.strip() == "") and not media:
+        raise HTTPException(
+            status_code=400,
+            detail="You must provide either a description or a media file"
+        )
+
+    media_type = "text"
+    media_url = None
+
+    # -----------------------------
+    # 3. Handle file upload
+    # -----------------------------
+    if media:
+        allowed_types = {
+            "image/jpeg": "image",
+            "image/png": "image",
+            "audio/mpeg": "audio",
+            "audio/wav": "audio",
+            "video/mp4": "video"
+        }
+
+        if media.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported file type"
+            )
+
+        # Generate a safe unique filename
+        file_ext = Path(media.filename).suffix
+        filename = f"{uuid4()}{file_ext}"  # ✅ use your import uuid4
+        file_path = UPLOAD_DIR / filename  # ✅ Path object
+
+        # Save file to disk
+        with file_path.open("wb") as buffer:
+            shutil.copyfileobj(media.file, buffer)
+
+        media_type = allowed_types[media.content_type]
+        media_url = str(file_path)  # store as string in DB
+
+    # -----------------------------
+    # 4. Create complaint in DB
+    # -----------------------------
     new_complaint = Complaint(
-        user_id=data.user_id,
-        title=data.title,
-        description=data.description,
-        complaint_type=data.complaint_type,
-        address=data.address,
-        status="pending"
+        user_id=user_id,
+        title=title,
+        description=description,
+        complaint_type=complaint_type,
+        address=address,
+        status="pending",
+        media_type=media_type,
+        media_url=media_url
     )
+
     db.add(new_complaint)
     db.commit()
     db.refresh(new_complaint)
 
+    # -----------------------------
+    # 5. Return response
+    # -----------------------------
+    return {
+        "success": True,
+        "message": "Complaint submitted successfully",
+        "complaint_id": str(new_complaint.id),
+        "media_type": media_type,
+        "media_url": media_url
+    }
     # ----------------------------------------
     # CREATE NOTIFICATION FOR ADMIN
     # ----------------------------------------

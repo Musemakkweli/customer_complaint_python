@@ -62,6 +62,8 @@ class ComplaintResponseSchema(BaseModel):
     complaint_type: str
     address: str
     status: str
+    media_type: str  # add this
+    media_url: Optional[str]  # add this
     created_at: str
     updated_at: str
 
