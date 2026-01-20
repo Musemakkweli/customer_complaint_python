@@ -309,12 +309,8 @@ def update_employee_id(user_id: str, data: UpdateEmployeeIDSchema, db: Session =
 # ---------------------- CREATE COMPLAINT ----------------------
 
 
-
-# -----------------------------
-# Ensure upload folder exists
-# -----------------------------
-UPLOAD_DIR = Path("uploads/complaints")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)  # create folder if missing
+COMPLAINT_UPLOAD_DIR = Path("uploads/complaints")
+COMPLAINT_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)  # create folder if missing
 
 
 @app.post("/complaints")
@@ -330,7 +326,12 @@ def submit_complaint(
     # -----------------------------
     # 1. Validate user
     # -----------------------------
-    user = db.query(User).filter(User.id == user_id).first()
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user_id UUID")
+
+    user = db.query(User).filter(User.id == user_uuid).first()
     if not user:
         raise HTTPException(404, "User not found")
 
@@ -369,21 +370,22 @@ def submit_complaint(
 
         # Generate a safe unique filename
         file_ext = Path(media.filename).suffix
-        filename = f"{uuid4()}{file_ext}"  # ✅ use your import uuid4
-        file_path = UPLOAD_DIR / filename  # ✅ Path object
+        filename = f"{uuid4()}{file_ext}"
+
+        file_path = COMPLAINT_UPLOAD_DIR / filename  # ✅ isolated Path
 
         # Save file to disk
         with file_path.open("wb") as buffer:
             shutil.copyfileobj(media.file, buffer)
 
         media_type = allowed_types[media.content_type]
-        media_url = str(file_path)  # store as string in DB
+        media_url = f"complaints/{filename}"  # store RELATIVE path only
 
     # -----------------------------
     # 4. Create complaint in DB
     # -----------------------------
     new_complaint = Complaint(
-        user_id=user_id,
+        user_id=user_uuid,
         title=title,
         description=description,
         complaint_type=complaint_type,
@@ -1459,3 +1461,14 @@ async def upload_test(file: UploadFile = File(...)):
 
     except Exception as e:
         return {"error": str(e)}
+from sqlalchemy import text  # ✅ make sure this import is at the top
+
+@app.get("/db-test")
+def db_test(db: Session = Depends(get_db)):
+    result = db.execute(
+        text("SELECT current_database(), current_schema()")
+    ).fetchone()
+    return {
+        "current_database": result[0],
+        "current_schema": result[1]
+    }

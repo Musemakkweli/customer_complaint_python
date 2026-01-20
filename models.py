@@ -62,7 +62,6 @@ class User(Base):
         default="customer"
     )  # customer, employee, admin
 
-
 # ------------------------------------
 # COMPLAINTS TABLE
 # ------------------------------------
@@ -74,33 +73,44 @@ class Complaint(Base):
         primary_key=True,
         default=uuid.uuid4
     )
+
     user_id = Column(
         GUID(),
         ForeignKey("users.id"),
         nullable=False
     )
+
     title = Column(String(255), nullable=False)
-    description = Column(String, nullable=False)
+    description = Column(String, nullable=True)  # allow null if media-only
     complaint_type = Column(
         String(20),
         nullable=False,
         default="common"
     )   # 'common' or 'private'
+
     status = Column(
         String(20),
         nullable=False,
         default="pending"
     )
+
     address = Column(String(255), nullable=False)
-    assigned_to = Column(String(50), nullable=True)  # Employee ID of the assigned employee
+    assigned_to = Column(String(50), nullable=True)  # Employee ID
+
+    # ✅ ADD THESE TWO COLUMNS
+    media_type = Column(String(20), nullable=True)   # image / audio / video / text
+    media_url = Column(String(500), nullable=True)   # complaints/<filename>
+
     created_at = Column(
         DateTime(timezone=True),
         default=func.now()
     )
+
     updated_at = Column(
         DateTime(timezone=True),
         onupdate=func.now()
     )
+
     
 
 class UserProfile(Base):
