@@ -1,6 +1,17 @@
+import os
 from supabase import create_client
+from dotenv import load_dotenv
 
-SUPABASE_URL = "https://vlxwjiktowwzypadnzun.supabase.co"
-SUPABASE_KEY = "sb_secret_e-N5yCa8RTx6Ggfdh73sOg_sp6Q8SVh"
+# Load environment variables from .env file
+load_dotenv()
 
+# Get Supabase credentials from environment variables
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# Ensure storage endpoint has trailing slash to satisfy SDK expectations
+if SUPABASE_URL and not SUPABASE_URL.endswith("/"):
+	SUPABASE_URL = f"{SUPABASE_URL}/"
+
+# Create Supabase client
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)

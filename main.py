@@ -28,8 +28,8 @@ import jwt
 # -------------------- LOAD ENVIRONMENT --------------------
 from dotenv import load_dotenv
 
-# Use the full path to your .env file
-load_dotenv(dotenv_path=r"H:\customer_complaint_backend\.env")
+# Load .env from the current directory
+load_dotenv()
 
 # Debug: check if env variables are loaded correctly
 print("MAIL_USERNAME:", os.getenv("MAIL_USERNAME"))
@@ -371,9 +371,9 @@ async def submit_complaint(
             # Upload to Supabase
             upload_response = supabase.storage.from_("rossa").upload(storage_path, file_bytes)
 
-            # Check for errors
-            if upload_response["error"]:
-                raise Exception(upload_response["error"]["message"])
+            # Check for errors (UploadResponse has .error attr, not subscriptable)
+            if getattr(upload_response, "error", None):
+                raise Exception(upload_response.error.message)
 
             # Get public URL (this returns a string)
             media_url = supabase.storage.from_("rossa").get_public_url(storage_path)
