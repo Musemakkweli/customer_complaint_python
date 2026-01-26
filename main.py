@@ -310,7 +310,6 @@ def update_employee_id(user_id: str, data: UpdateEmployeeIDSchema, db: Session =
 
 # ---------------------- CREATE COMPLAINT ----------------------
 
-
 @app.post("/complaints")
 async def submit_complaint(
     user_id: str = Form(...),
@@ -332,6 +331,7 @@ async def submit_complaint(
     user = db.query(User).filter(User.id == user_uuid).first()
     if not user:
         raise HTTPException(404, "User not found")
+
     if user.role != "customer":
         raise HTTPException(403, "Only customers can submit complaints")
 
@@ -348,7 +348,7 @@ async def submit_complaint(
     media_url = None
 
     # -----------------------------
-    # 3. Handle file upload to Supabase
+    # 3. Handle media upload (Supabase Storage)
     # -----------------------------
     if media:
         allowed_types = {
@@ -360,19 +360,21 @@ async def submit_complaint(
         }
 
         if media.content_type not in allowed_types:
-            raise HTTPException(
-                status_code=400,
-                detail="Unsupported file type"
-            )
+            raise HTTPException(400, "Unsupported file type")
 
         file_ext = Path(media.filename).suffix
-        filename = f"{uuid4()}{file_ext}"
-        storage_path = f"complaints/{filename}"
+        storage_path = f"complaints/{uuid4()}{file_ext}"
 
-        media_bytes = await media.read()  # read the file content
-        supabase.storage.from_("rossa").upload(storage_path, media_bytes)  # upload to bucket
-        media_url = supabase.storage.from_("rossa").get_public_url(storage_path).public_url
-        media_type = allowed_types[media.content_type]
+        # Read file bytes
+        file_bytes = await media.read()
+
+        # Upload to Supabase
+        try:
+            supabase.storage.from_("rossa").upload(storage_path, file_bytes)
+            media_url = supabase.storage.from_("rossa").get_public_url(storage_path)
+            media_type = allowed_types[media.content_type]
+        except Exception as e:
+            raise HTTPException(500, f"Failed to upload media: {str(e)}")
 
     # -----------------------------
     # 4. Create complaint in DB
@@ -398,10 +400,18 @@ async def submit_complaint(
     return {
         "success": True,
         "message": "Complaint submitted successfully",
-        "complaint_id": str(new_complaint.id),
-        "media_type": media_type,
-        "media_url": media_url
+        "complaint": {
+            "id": str(new_complaint.id),
+            "title": title,
+            "description": description,
+            "complaint_type": complaint_type,
+            "address": address,
+            "status": "pending",
+            "media_type": media_type,
+            "media_url": media_url
+        }
     }
+
     # ----------------------------------------
     # CREATE NOTIFICATION FOR ADMIN
     # ----------------------------------------
