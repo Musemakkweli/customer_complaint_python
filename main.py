@@ -16,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema
 
+from supabase_client import supabase
+
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 
@@ -309,12 +311,8 @@ def update_employee_id(user_id: str, data: UpdateEmployeeIDSchema, db: Session =
 # ---------------------- CREATE COMPLAINT ----------------------
 
 
-COMPLAINT_UPLOAD_DIR = Path("uploads/complaints")
-COMPLAINT_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)  # create folder if missing
-
-
 @app.post("/complaints")
-def submit_complaint(
+async def submit_complaint(
     user_id: str = Form(...),
     title: str = Form(...),
     description: str = Form(None),
@@ -334,7 +332,6 @@ def submit_complaint(
     user = db.query(User).filter(User.id == user_uuid).first()
     if not user:
         raise HTTPException(404, "User not found")
-
     if user.role != "customer":
         raise HTTPException(403, "Only customers can submit complaints")
 
@@ -351,7 +348,7 @@ def submit_complaint(
     media_url = None
 
     # -----------------------------
-    # 3. Handle file upload
+    # 3. Handle file upload to Supabase
     # -----------------------------
     if media:
         allowed_types = {
@@ -368,18 +365,14 @@ def submit_complaint(
                 detail="Unsupported file type"
             )
 
-        # Generate a safe unique filename
         file_ext = Path(media.filename).suffix
         filename = f"{uuid4()}{file_ext}"
+        storage_path = f"complaints/{filename}"
 
-        file_path = COMPLAINT_UPLOAD_DIR / filename  # ✅ isolated Path
-
-        # Save file to disk
-        with file_path.open("wb") as buffer:
-            shutil.copyfileobj(media.file, buffer)
-
+        media_bytes = await media.read()  # read the file content
+        supabase.storage.from_("rossa").upload(storage_path, media_bytes)  # upload to bucket
+        media_url = supabase.storage.from_("rossa").get_public_url(storage_path).public_url
         media_type = allowed_types[media.content_type]
-        media_url = f"complaints/{filename}"  # store RELATIVE path only
 
     # -----------------------------
     # 4. Create complaint in DB
