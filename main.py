@@ -330,10 +330,10 @@ async def submit_complaint(
 
     user = db.query(User).filter(User.id == user_uuid).first()
     if not user:
-        raise HTTPException(404, "User not found")
+        raise HTTPException(status_code=404, detail="User not found")
 
     if user.role != "customer":
-        raise HTTPException(403, "Only customers can submit complaints")
+        raise HTTPException(status_code=403, detail="Only customers can submit complaints")
 
     # -----------------------------
     # 2. Validate content
@@ -360,21 +360,26 @@ async def submit_complaint(
         }
 
         if media.content_type not in allowed_types:
-            raise HTTPException(400, "Unsupported file type")
+            raise HTTPException(status_code=400, detail="Unsupported file type")
 
         file_ext = Path(media.filename).suffix
         storage_path = f"complaints/{uuid4()}{file_ext}"
 
-        # Read file bytes
-        file_bytes = await media.read()
-
-        # Upload to Supabase
         try:
-            supabase.storage.from_("rossa").upload(storage_path, file_bytes)
-            media_url = supabase.storage.from_("rossa").get_public_url(storage_path)
+            # Read file bytes
+            file_bytes = await media.read()
+            
+            # Upload to Supabase bucket "rossa"
+            upload_response = supabase.storage.from_("rossa").upload(storage_path, file_bytes)
+            if upload_response.get("error"):
+                raise HTTPException(status_code=500, detail=f"Supabase upload failed: {upload_response['error']}")
+
+            # Get public URL
+            media_url = supabase.storage.from_("rossa").get_public_url(storage_path)["publicUrl"]
             media_type = allowed_types[media.content_type]
+
         except Exception as e:
-            raise HTTPException(500, f"Failed to upload media: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to upload media: {str(e)}")
 
     # -----------------------------
     # 4. Create complaint in DB
@@ -402,16 +407,15 @@ async def submit_complaint(
         "message": "Complaint submitted successfully",
         "complaint": {
             "id": str(new_complaint.id),
-            "title": title,
-            "description": description,
-            "complaint_type": complaint_type,
-            "address": address,
-            "status": "pending",
-            "media_type": media_type,
-            "media_url": media_url
+            "title": new_complaint.title,
+            "description": new_complaint.description,
+            "complaint_type": new_complaint.complaint_type,
+            "address": new_complaint.address,
+            "status": new_complaint.status,
+            "media_type": new_complaint.media_type,
+            "media_url": new_complaint.media_url
         }
     }
-
     # ----------------------------------------
     # CREATE NOTIFICATION FOR ADMIN
     # ----------------------------------------
