@@ -318,7 +318,7 @@ async def submit_complaint(
     complaint_type: str = Form(...),
     address: str = Form(...),
     media: UploadFile = File(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db)  # Your DB dependency
 ):
     # -----------------------------
     # 1. Validate user
@@ -331,7 +331,6 @@ async def submit_complaint(
     user = db.query(User).filter(User.id == user_uuid).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-
     if user.role != "customer":
         raise HTTPException(status_code=403, detail="Only customers can submit complaints")
 
@@ -365,17 +364,19 @@ async def submit_complaint(
         file_ext = Path(media.filename).suffix
         storage_path = f"complaints/{uuid4()}{file_ext}"
 
-        try:
-            # Read file bytes
-            file_bytes = await media.read()
-            
-            # Upload to Supabase bucket "rossa"
-            upload_response = supabase.storage.from_("rossa").upload(storage_path, file_bytes)
-            if upload_response.get("error"):
-                raise HTTPException(status_code=500, detail=f"Supabase upload failed: {upload_response['error']}")
+        # Read file bytes
+        file_bytes = await media.read()
 
-            # Get public URL
-            media_url = supabase.storage.from_("rossa").get_public_url(storage_path)["publicUrl"]
+        try:
+            # Upload to Supabase
+            upload_response = supabase.storage.from_("rossa").upload(storage_path, file_bytes)
+
+            # Check for errors
+            if upload_response["error"]:
+                raise Exception(upload_response["error"]["message"])
+
+            # Get public URL (this returns a string)
+            media_url = supabase.storage.from_("rossa").get_public_url(storage_path)
             media_type = allowed_types[media.content_type]
 
         except Exception as e:
@@ -407,13 +408,13 @@ async def submit_complaint(
         "message": "Complaint submitted successfully",
         "complaint": {
             "id": str(new_complaint.id),
-            "title": new_complaint.title,
-            "description": new_complaint.description,
-            "complaint_type": new_complaint.complaint_type,
-            "address": new_complaint.address,
-            "status": new_complaint.status,
-            "media_type": new_complaint.media_type,
-            "media_url": new_complaint.media_url
+            "title": title,
+            "description": description,
+            "complaint_type": complaint_type,
+            "address": address,
+            "status": "pending",
+            "media_type": media_type,
+            "media_url": media_url
         }
     }
     # ----------------------------------------
